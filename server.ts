@@ -273,7 +273,14 @@ app.post('/api/business-facts', async (req, res) => {
 // ==========================================
 let ttsClient: textToSpeech.TextToSpeechClient | null = null;
 try {
-  ttsClient = new textToSpeech.TextToSpeechClient();
+  if (process.env.GOOGLE_CREDENTIALS_JSON) {
+    // Lade Credentials direkt aus einer Environment Variable (für Render/Vercel)
+    const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+    ttsClient = new textToSpeech.TextToSpeechClient({ credentials });
+  } else {
+    // Standard-Verhalten: Lade aus lokaler Datei via GOOGLE_APPLICATION_CREDENTIALS
+    ttsClient = new textToSpeech.TextToSpeechClient();
+  }
 } catch (e) {
   console.warn("Google TTS Client could not be initialized:", e);
 }
