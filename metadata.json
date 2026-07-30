@@ -1,0 +1,6 @@
+{
+  "name": "Autohaus KI-Assistent",
+  "description": "Intelligenter KI-Telefonempfang für Autohäuser mit automatischer Anrufer-Kontexterkennung, natürlicher Sprachinteraktion und autonomer Lead-Erfassung.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
