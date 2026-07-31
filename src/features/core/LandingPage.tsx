@@ -180,7 +180,7 @@ export const LandingPage: React.FC = () => {
 
             <button 
               onClick={handleStartCall}
-              className="relative group flex flex-col items-center focus:outline-none"
+              className="relative group flex flex-col items-center focus:outline-none mb-10"
             >
               <div className="absolute inset-0 top-0 bg-[#E8F0FE] rounded-full opacity-0 hover-pulse-ring transition-opacity duration-300 -z-20"></div>
               <div className="absolute inset-0 top-0 bg-[#E8F0FE] rounded-full scale-[1.35] transition-transform duration-300 ease-out group-hover:scale-[1.45] -z-10"></div>
@@ -188,13 +188,106 @@ export const LandingPage: React.FC = () => {
                 <Phone className="w-8 h-8" strokeWidth={2.5} />
               </div>
               <span className="mt-14 text-[15px] font-semibold text-slate-600 group-hover:text-[#1A73E8] transition-colors">
-                Anruf starten
+                Anruf im Browser starten
               </span>
             </button>
 
-            <p className="mt-4 text-xs text-slate-400 font-medium">
-              Lisa ist rund um die Uhr für Sie erreichbar
-            </p>
+            {/* Neues Feld für echten Anruf */}
+            <div className="w-full max-w-sm flex flex-col items-center border-t border-slate-100 pt-8">
+              <p className="text-[13px] font-semibold text-slate-600 mb-4">Oder lassen Sie sich auf dem Handy anrufen:</p>
+              <div className="flex w-full flex-col sm:flex-row gap-2">
+                
+                {/* Custom Dropdown to bypass Windows emoji limitations */}
+                <div className="relative group">
+                  <div className="flex h-full items-center rounded-xl border border-slate-200 bg-[#F8F9FA] px-3 py-3 cursor-pointer hover:border-[#1A73E8] transition-colors">
+                    <img id="selectedFlag" src="https://flagcdn.com/w20/de.png" alt="DE" className="w-5 h-auto mr-2 rounded-sm" />
+                    <span id="selectedCodeText" className="text-sm text-slate-600 font-medium">+49</span>
+                    <input type="hidden" id="countryCodeInput" value="+49" />
+                  </div>
+                  
+                  {/* Dropdown Menu (hidden by default, shown on hover/focus within group) */}
+                  <div className="absolute top-full left-0 mt-1 w-32 bg-white border border-slate-100 shadow-xl rounded-xl py-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                    {[
+                      { code: '+49', country: 'de', label: 'DE (+49)' },
+                      { code: '+43', country: 'at', label: 'AT (+43)' },
+                      { code: '+41', country: 'ch', label: 'CH (+41)' },
+                      { code: '+1', country: 'us', label: 'US (+1)' },
+                      { code: '+44', country: 'gb', label: 'GB (+44)' }
+                    ].map(c => (
+                      <div 
+                        key={c.code}
+                        className="flex items-center px-4 py-2 hover:bg-slate-50 cursor-pointer"
+                        onClick={() => {
+                          (document.getElementById('countryCodeInput') as HTMLInputElement).value = c.code;
+                          (document.getElementById('selectedCodeText') as HTMLSpanElement).innerText = c.code;
+                          (document.getElementById('selectedFlag') as HTMLImageElement).src = `https://flagcdn.com/w20/${c.country}.png`;
+                          // Close dropdown hack by removing focus
+                          (document.activeElement as HTMLElement)?.blur();
+                        }}
+                      >
+                        <img src={`https://flagcdn.com/w20/${c.country}.png`} alt={c.country} className="w-5 h-auto mr-3 rounded-sm shadow-sm" />
+                        <span className="text-sm text-slate-700">{c.code}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-1 rounded-xl border border-slate-200 bg-[#F8F9FA] overflow-hidden focus-within:border-[#1A73E8] focus-within:ring-1 focus-within:ring-[#1A73E8] transition-all">
+                  <input 
+                    type="text" 
+                    id="landingPhoneInput"
+                    placeholder="151 1234567" 
+                    className="flex-1 bg-transparent border-none px-4 py-3 text-sm focus:outline-none"
+                  />
+                </div>
+                
+                <button 
+                  onClick={async () => {
+                    const country = (document.getElementById('countryCodeInput') as HTMLInputElement).value;
+                    let phoneInput = (document.getElementById('landingPhoneInput') as HTMLInputElement).value;
+                    
+                    if (!phoneInput) return alert("Bitte Nummer eingeben!");
+                    
+                    // Führende Nullen entfernen (z.B. aus 0176 wird 176) und Leerzeichen löschen
+                    phoneInput = phoneInput.replace(/^0+/, '').replace(/[\s-]/g, '');
+                    const fullPhone = country + phoneInput;
+
+                    let publicUrl = window.location.origin;
+                    // Nur lokal nach Ngrok fragen
+                    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                      const manualUrl = prompt("Lokaler Test: Bitte Ngrok URL eingeben (z.B. https://1234.ngrok-free.app):", "");
+                      if (!manualUrl) return;
+                      publicUrl = manualUrl;
+                    }
+
+                    try {
+                      const res = await fetch('/api/twilio/call', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          toPhone: fullPhone,
+                          ngrokUrl: publicUrl.replace(/\/$/, '')
+                        })
+                      });
+                      const data = await res.json();
+                      if (data.success) {
+                        alert("Lisa ruft Sie jetzt an auf: " + fullPhone);
+                      } else {
+                        alert("Fehler: " + data.error);
+                      }
+                    } catch(e: any) {
+                      alert("Netzwerkfehler: " + e.message);
+                    }
+                  }}
+                  className="bg-[#1A73E8] text-white px-5 py-3 rounded-xl text-sm font-medium hover:bg-[#1557B0] transition-colors whitespace-nowrap shadow-md shadow-blue-500/20"
+                >
+                  Lass Lisa Sie anrufen
+                </button>
+              </div>
+              <p className="mt-4 text-xs text-slate-400 font-medium text-center">
+                Lisa ist rund um die Uhr für Sie erreichbar
+              </p>
+            </div>
           </>
         ) : (
           <div className="w-full flex flex-col h-[60vh] mt-10">

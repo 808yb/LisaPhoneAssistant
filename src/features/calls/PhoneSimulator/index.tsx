@@ -73,9 +73,13 @@ export const PhoneSimulator: React.FC<PhoneSimulatorProps> = ({
   };
 
   const handleCallRealPhone = async () => {
-    if (!ngrokUrl) {
-      alert("Bitte geben Sie Ihre Ngrok URL ein (z.B. https://1234.ngrok-free.app)");
-      return;
+    let publicUrl = window.location.origin;
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      if (!ngrokUrl) {
+        alert("Bitte geben Sie Ihre Ngrok URL ein (z.B. https://1234.ngrok-free.app)");
+        return;
+      }
+      publicUrl = ngrokUrl;
     }
 
     setIsCallingRealPhone(true);
@@ -84,8 +88,8 @@ export const PhoneSimulator: React.FC<PhoneSimulatorProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          toPhone: '+16086556067',
-          ngrokUrl: ngrokUrl.replace(/\/$/, '')
+          toPhone: customPhone,
+          ngrokUrl: publicUrl.replace(/\/$/, '')
         })
       });
 
@@ -128,9 +132,16 @@ export const PhoneSimulator: React.FC<PhoneSimulatorProps> = ({
         {/* Real Phone Call Banner */}
         <div className="mt-4 pt-4 border-t border-slate-200 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="text-xs text-slate-600 max-w-lg">
-            <strong className="text-blue-700">Live-Anruf Testen:</strong> Geben Sie dazu Ihre öffentliche Ngrok URL ein.
+            <strong className="text-blue-700">Live-Anruf Testen:</strong> Geben Sie Ihre echte Nummer (mit Ländercode, z.B. +49...) und Ngrok URL ein.
           </div>
           <div className="flex items-center space-x-2 w-full md:w-auto">
+            <input
+              type="text"
+              value={customPhone}
+              onChange={(e) => setCustomPhone(e.target.value)}
+              placeholder="+49 151 12345678"
+              className="bg-slate-50 text-slate-700 border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-indigo-500 w-full md:w-40"
+            />
             <input
               type="text"
               value={ngrokUrl}
