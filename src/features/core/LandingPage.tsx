@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Phone, PhoneOff, Mic, Loader2 } from 'lucide-react';
-import { speakText, stopSpeaking } from '../lib/audio';
+import { speakText, stopSpeaking } from '../calls/audio';
 
 interface TranscriptEntry {
   id: string;

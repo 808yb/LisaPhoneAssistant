@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Save, Shield, Clock, Phone, MapPin, Sparkles, Check, AlertCircle } from 'lucide-react';
-import { BusinessFacts } from '../types';
+import { BusinessFacts } from '../../core/types';
 
 export const BusinessFactsSettings: React.FC = () => {
   const [facts, setFacts] = useState<BusinessFacts | null>(null);

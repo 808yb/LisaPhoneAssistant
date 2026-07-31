@@ -1,7 +1,8 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
+import { Type, FunctionDeclaration } from "@google/genai";
+import { GeminiService, scriptedResponses } from "./server/ai/Gemini";
 import dotenv from "dotenv";
 import fs from "fs";
 import { createClient } from "@supabase/supabase-js";
@@ -287,14 +288,7 @@ try {
 
 const ttsCache = new Map<string, Buffer>();
 
-const scriptedResponses: Record<string, string> = {
-  '[SCRIPT_GREETING]': 'Autohaus Kaiserslautern, Guten Tag. Hier ist Lisa, Ihre KI-Assistentin. Dieses Gespräch wird nicht aufgezeichnet. Wie kann ich Ihnen helfen?',
-  '[SCRIPT_ASK_CUSTOMER]': 'Sind Sie ein Kunde bei uns?',
-  '[SCRIPT_ASK_PLATE]': 'Wie lautet Ihr Kennzeichen?',
-  '[SCRIPT_OPENING_HOURS]': 'Unsere Öffnungszeiten sind von Montag bis Freitag von 08:00 bis 18:00 Uhr und Samstag von 09:00 bis 14:00 Uhr. Am Sonntag haben wir geschlossen.',
-  '[SCRIPT_ANYTHING_ELSE]': 'Ich habe Ihr Anliegen gespeichert. Gibt es noch etwas, was ich heute für Sie tun kann?',
-  '[SCRIPT_FAREWELL]': 'Vielen Dank! Ich habe Ihr Anliegen an unser Team weitergeleitet. Auf Wiederhören.'
-};
+// scriptedResponses are now imported from server/ai/Gemini.ts
 
 const DEFAULT_VOICE_ID = 'de-DE-Journey-F'; // Journey-F is commonly used for Aoede
 
@@ -323,9 +317,12 @@ async function pregenerateScriptAudio(voiceId: string) {
         try {
           console.log(`Generating TTS for ${tag} and saving to disk.`);
           const request = {
-            input: { text: text },
+            input: { text: text + ' ...' },
             voice: { languageCode: 'de-DE', name: voiceId },
-            audioConfig: { audioEncoding: 'MP3' as const, speakingRate: 1.10 }
+            audioConfig: { 
+              audioEncoding: 'MP3' as const, 
+              ...(voiceId.includes('Journey') ? {} : { speakingRate: 1.10 })
+            }
           };
           const [response] = await ttsClient.synthesizeSpeech(request);
           if (response.audioContent) {
@@ -392,11 +389,11 @@ app.post('/api/voice/tts', async (req, res) => {
     if (!ttsClient) throw new Error("Google TTS Client not initialized.");
 
     const request = {
-      input: { text: text },
+      input: { text: text + ' ...' },
       voice: { languageCode: 'de-DE', name: targetVoiceId },
       audioConfig: {
         audioEncoding: 'MP3' as const,
-        speakingRate: 1.10 // Speeds up the voice by 10%
+        ...(targetVoiceId.includes('Journey') ? {} : { speakingRate: 1.10 }) // Speeds up the voice by 10%
       },
     };
 
@@ -426,37 +423,7 @@ app.post('/api/voice/tts', async (req, res) => {
 const getAiClient = () => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY environment variable is not configured.');
-  return new GoogleGenAI({ apiKey, httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } });
-};
-
-const saveLeadFunctionDeclaration: FunctionDeclaration = {
-  name: "save_lead",
-  description: "Speichert ein neues Anliegen / Lead-Ticket für das Autohaus-Team, sobald der Anrufer seinen Namen, Anliegen und Kontaktdaten genannt hat.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      callerName: { type: Type.STRING, description: "Name des Anrufers" },
-      phoneNumber: { type: Type.STRING, description: "Telefonnummer des Anrufers" },
-      category: { type: Type.STRING, description: "Kategorie des Anliegens: 'workshop', 'sales', 'test_drive', 'spare_parts', 'rental', 'general'" },
-      concern: { type: Type.STRING, description: "Genaue Beschreibung des Kundenanliegens" },
-      urgency: { type: Type.STRING, description: "Dringlichkeit: 'high', 'normal', 'low'" },
-      vehicleInfo: { type: Type.STRING, description: "Fahrzeugmodell und Kennzeichen" },
-      preferredCallbackTime: { type: Type.STRING, description: "Wunschzeit für Rückruf" }
-    },
-    required: ["callerName", "phoneNumber", "category", "concern", "urgency"]
-  }
-};
-
-const updateLeadFunctionDeclaration: FunctionDeclaration = {
-  name: "update_lead",
-  description: "Ergänzt das zuletzt erstellte Ticket dieses Anrufs um weitere Informationen, falls der Kunde noch ein weiteres Anliegen hat.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      additionalConcern: { type: Type.STRING, description: "Das weitere Anliegen oder die Ergänzungen des Kunden" }
-    },
-    required: ["additionalConcern"]
-  }
+  return new GeminiService(apiKey, supabase);
 };
 
 app.post('/api/voice/interact', async (req, res) => {
@@ -488,215 +455,18 @@ app.post('/api/voice/interact', async (req, res) => {
     const { data: allCusts } = await supabase.from('customers').select('*');
     const matchedCustomer = allCusts?.find(c => normalizePhone(c.phone) === cleanPhone);
 
-    let injectedContext = '';
-    if (matchedCustomer) {
-      injectedContext = `[GEHEIMER KUNDENKONTEXT]:
-- Anrufer Name: ${matchedCustomer.name}
-- Telefonnummer: ${matchedCustomer.phone}
-- Bekannter Stammkunde: ${matchedCustomer.is_known_customer ? 'JA' : 'NEIN (Mietkunde)'}
-- Aktuelles Fahrzeug: ${matchedCustomer.vehicle || 'Keines'} (Kennzeichen: ${matchedCustomer.license_plate || 'Keines'})
-- Letzter Werkstattgrund: ${matchedCustomer.last_visit_reason || 'Keiner'}
-- Notizen: ${matchedCustomer.notes || 'Keine'}
-Spreche den Kunden mit Namen an.`;
-    } else {
-      injectedContext = `[GEHEIMER KUNDENKONTEXT]:
-- Telefonnummer: ${phoneNumber || 'Unbekannt'}
-- Kundenstatus: NEUKUNDE
-Begrüße höflich und frage direkt, wie du helfen kannst und wie der Name ist.`;
-    }
+    const aiService = getAiClient();
+    const result = await aiService.processInteraction(
+      phoneNumber,
+      userMessage,
+      history,
+      isFirstGreeting,
+      hasSavedLead,
+      businessFacts,
+      matchedCustomer
+    );
 
-    if (hasSavedLead) {
-      injectedContext += `\n\n[WICHTIGER SYSTEM-HINWEIS]: Du hast für diesen Anruf bereits 'save_lead' aufgerufen. Rufe es unter KEINEN UMSTÄNDEN noch einmal auf! Falls der Kunde noch ein weiteres Anliegen hat, benutze AUSSCHLIESSLICH 'update_lead'. Wenn der Kunde kein weiteres Anliegen hat (z.B. "Nein", "Nein Danke"), verabschiede dich DIREKT mit [SCRIPT_FAREWELL] ohne weitere Tools aufzurufen.`;
-    }
-
-    const systemInstruction = `Du bist "Lisa", die KI-Telefonempfangsdame des "${businessFacts.dealershipName}".
-DEINE AUFGABE (LEAD-QUALIFIZIERUNG): Erfahre den Grund des Anrufs. Sobald du alle Infos hast, ruf SOFORT das Tool \`save_lead\` auf!
-
-WICHTIG (TERMINVERGABE): Wenn der Kunde ein Anliegen hat, das einen Termin erfordert (z.B. Werkstatt, Probefahrt, Beratung), MUSST du ihm ZUERST zwei konkrete, fiktive Terminvorschläge machen (z.B. "Morgen um 10:00 Uhr oder Donnerstag um 14:30 Uhr") und ihn fragen, was besser passt. Rufe \`save_lead\` ERST AUF, wenn er sich für einen Termin entschieden hat! 
-Achte beim Aufruf von \`save_lead\` unbedingt darauf, dass das Feld 'concern' BEIDES enthält: Den tatsächlichen Grund des Anliegens (z.B. "Klimaanlage kühlt nicht") UND den vereinbarten Termin!
-
-WICHTIG ZUR KOSTENERSPARNIS:
-Um Kosten zu sparen, hast du Zugriff auf vorgefertigte Skript-Antworten. Wenn eine dieser Antworten passt, antworte AUSSCHLIESSLICH mit dem Tag (z.B. "[SCRIPT_ASK_CUSTOMER]").
-Verfügbare Skript-Antworten:
-[SCRIPT_GREETING]: "Autohaus Kaiserslautern, Guten Tag..."
-[SCRIPT_ASK_CUSTOMER]: "Sind Sie ein Kunde bei uns?"
-[SCRIPT_ASK_PLATE]: "Wie lautet Ihr Kennzeichen?"
-[SCRIPT_OPENING_HOURS]: "Unsere Öffnungszeiten sind von Montag bis Freitag von 08:00 bis 18:00 Uhr..."
-[SCRIPT_ANYTHING_ELSE]: "Ich habe Ihr Anliegen gespeichert. Gibt es noch etwas, was ich heute für Sie tun kann?"
-[SCRIPT_FAREWELL]: "Vielen Dank! Ich habe Ihr Anliegen an unser Team weitergeleitet. Auf Wiederhören."
-
-WICHTIGE REGELN ZUM SKRIPT & TOOLS:
-1. Wenn der Kunde direkt nach etwas fragt (z.B. Öffnungszeiten), überspringe andere Fragen und gib ihm die Antwort (z.B. [SCRIPT_OPENING_HOURS]).
-2. Wenn der Kunde seine Infos (Kennzeichen, etc.) direkt nennt, überspringe das Nachfragen und gehe direkt zum nächsten logischen Schritt (z.B. direkt save_lead aufrufen).
-3. Wenn der Kunde etwas fragt, was NICHT im Skript steht, generiere eine eigene, natürliche Antwort (Off-Script). Fasse dich extrem kurz (max 1-2 Sätze).
-4. NACHDEM du save_lead aufgerufen hast, beende das Gespräch NICHT sofort. Frage stattdessen IMMER: [SCRIPT_ANYTHING_ELSE].
-5. Wenn der Kunde danach ein weiteres Anliegen äußert, verarbeite es und rufe das Tool \`update_lead\` auf. Frage danach wieder, ob du noch helfen kannst.
-6. Erst wenn der Kunde verneint oder sich verabschiedet, antworte mit: [SCRIPT_FAREWELL].
-7. Wenn der Kunde auf eine Ja/Nein-Frage mit "9" oder "nine" antwortet, interpretiere dies IMMER als "Nein".
-8. Merke dir den Namen des Kunden im Verlauf des Gesprächs genau und frage auf keinen Fall mehrmals danach.
-
-${businessFacts.guardrailsPrompt}
-${injectedContext}`;
-
-    const contents: any[] = [];
-    if (history && Array.isArray(history)) {
-      // TOKEN OPTIMIZATION: Only send the last 4 messages to save context costs
-      const prunedHistory = history.slice(-4);
-      for (const msg of prunedHistory) {
-        if (msg.sender === 'customer') contents.push({ role: 'user', parts: [{ text: msg.text }] });
-        else if (msg.sender === 'assistant') contents.push({ role: 'model', parts: [{ text: msg.text }] });
-      }
-    }
-
-    if (isFirstGreeting) {
-      return res.json({
-        success: true,
-        text: scriptedResponses['[SCRIPT_GREETING]'],
-        injectedContext,
-        toolCalled: false,
-        savedLeadData: null,
-        matchedCustomer: matchedCustomer ? { name: matchedCustomer.name, vehicle: matchedCustomer.vehicle } : null
-      });
-    } else if (userMessage) {
-      contents.push({ role: 'user', parts: [{ text: userMessage }] });
-    }
-
-    const ai = getAiClient();
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents,
-      config: {
-        systemInstruction,
-        temperature: 0.7,
-        tools: [{ functionDeclarations: [saveLeadFunctionDeclaration, updateLeadFunctionDeclaration] }]
-      }
-    });
-
-    let assistantText = response.text || '';
-
-    // Parse scripted response tags to save output tokens and hit TTS cache
-    for (const [tag, text] of Object.entries(scriptedResponses)) {
-      if (assistantText.includes(tag)) {
-        assistantText = text;
-        break; // Replace the tag with the full script text
-      }
-    }
-    let toolCalled = false;
-    let savedLeadData: any = null;
-    let updatedLeadData: any = null;
-
-    const functionCalls = response.functionCalls;
-    if (functionCalls && functionCalls.length > 0) {
-      for (const call of functionCalls) {
-        if (call.name === 'save_lead') {
-          toolCalled = true;
-          const args: any = call.args;
-
-          savedLeadData = {
-            id: 'lead-' + Date.now().toString(36),
-            caller_name: args.callerName || (matchedCustomer?.name || 'Unbekannt'),
-            phone_number: args.phoneNumber || phoneNumber,
-            category: args.category || 'general',
-            concern: args.concern || 'Anfrage',
-            urgency: args.urgency || 'normal',
-            vehicle_info: args.vehicleInfo || (matchedCustomer?.vehicle || ''),
-            preferred_callback_time: args.preferredCallbackTime || 'Heute',
-            status: 'new',
-            notes: 'Automatisch qualifiziert',
-            transcript: history || [],
-            assigned_staff: args.category === 'workshop' ? 'Werkstatt' : 'Empfang'
-          };
-
-          await supabase.from('leads').insert(savedLeadData);
-
-          try {
-            const followUpRes = await ai.models.generateContent({
-              model: "gemini-3.6-flash",
-              contents: [
-                ...contents,
-                response.candidates?.[0]?.content || { role: 'model', parts: [{ functionCall: call }] },
-                {
-                  role: 'user',
-                  parts: [{ functionResponse: { name: 'save_lead', response: { success: true } } }]
-                }
-              ],
-              config: {
-                systemInstruction,
-                tools: [{ functionDeclarations: [saveLeadFunctionDeclaration, updateLeadFunctionDeclaration] }]
-              }
-            });
-            if (followUpRes.text) {
-              assistantText = followUpRes.text;
-              for (const [tag, text] of Object.entries(scriptedResponses)) {
-                if (assistantText.includes(tag)) {
-                  assistantText = text;
-                  break;
-                }
-              }
-            }
-          } catch (e) {
-            assistantText = scriptedResponses['[SCRIPT_ANYTHING_ELSE]'];
-          }
-        } else if (call.name === 'update_lead') {
-          toolCalled = true;
-          const args: any = call.args;
-          const additionalConcern = args.additionalConcern;
-
-          // Get the most recent lead for this phone number
-          const { data: latestLeads } = await supabase.from('leads')
-            .select('id, concern')
-            .eq('phone_number', phoneNumber || '')
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          if (latestLeads && latestLeads.length > 0) {
-            const leadId = latestLeads[0].id;
-            const updatedConcern = latestLeads[0].concern + "\n\n[ERGÄNZUNG]: " + additionalConcern;
-            await supabase.from('leads').update({ concern: updatedConcern, updated_at: new Date().toISOString() }).eq('id', leadId);
-            updatedLeadData = { id: leadId, concern: updatedConcern };
-          }
-
-          try {
-            const followUpRes = await ai.models.generateContent({
-              model: "gemini-3.6-flash",
-              contents: [
-                ...contents,
-                response.candidates?.[0]?.content || { role: 'model', parts: [{ functionCall: call }] },
-                {
-                  role: 'user',
-                  parts: [{ functionResponse: { name: 'update_lead', response: { success: true } } }]
-                }
-              ],
-              config: {
-                systemInstruction,
-                tools: [{ functionDeclarations: [saveLeadFunctionDeclaration, updateLeadFunctionDeclaration] }]
-              }
-            });
-            if (followUpRes.text) {
-              assistantText = followUpRes.text;
-              for (const [tag, text] of Object.entries(scriptedResponses)) {
-                if (assistantText.includes(tag)) {
-                  assistantText = text;
-                  break;
-                }
-              }
-            }
-          } catch (e) {
-            assistantText = scriptedResponses['[SCRIPT_ANYTHING_ELSE]'];
-          }
-        }
-      }
-    }
-
-    res.json({
-      success: true,
-      text: assistantText,
-      injectedContext,
-      toolCalled,
-      savedLeadData: savedLeadData ? { callerName: savedLeadData.caller_name, category: savedLeadData.category } : null,
-      updatedLeadData,
-      matchedCustomer: matchedCustomer ? { name: matchedCustomer.name, vehicle: matchedCustomer.vehicle } : null
-    });
+    res.json(result);
   } catch (error: any) {
     console.error('Gemini Voice Interact Error:', error);
     res.status(500).json({ error: 'Fehler bei der KI-Verarbeitung', details: error.message });

@@ -4,14 +4,16 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Header } from './components/Header';
-import { PhoneSimulator } from './components/PhoneSimulator';
-import { LeadDashboard } from './components/LeadDashboard';
-import { CustomerDatabase } from './components/CustomerDatabase';
-import { BusinessFactsSettings } from './components/BusinessFactsSettings';
-import { CallAnalytics } from './components/CallAnalytics';
-import { LandingPage } from './components/LandingPage';
-import { Customer, Lead } from './types';
+import { Header } from './features/core/Header';
+import { PhoneSimulator } from './features/calls/PhoneSimulator';
+import { Dashboard } from './features/dashboard';
+import { CustomerDatabase as CustomerList } from './features/customers/CustomerList';
+import { BusinessFactsSettings as Settings } from './features/settings/Settings';
+import { CallAnalytics } from './features/calls/CallAnalytics';
+import { LandingPage } from './features/core/LandingPage';
+import { Customer, Lead } from './core/types';
+import { useCustomers } from './features/customers/hooks/useCustomers';
+import { useLeads } from './features/dashboard/hooks/useLeads';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'landing' | 'simulator' | 'leads' | 'customers' | 'settings' | 'analytics'>(() => {
@@ -21,49 +23,9 @@ export default function App() {
     if (['customers', 'settings', 'analytics'].includes(hash)) return hash as any;
     return 'landing';
   });
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-
-  // Fetch Customers and Leads on Mount
-  const fetchInitialData = async () => {
-    try {
-      const [custRes, leadsRes] = await Promise.all([
-        fetch('/api/customers'),
-        fetch('/api/leads')
-      ]);
-
-      if (custRes.ok) {
-        const custData = await custRes.json();
-        setCustomers(custData.map((c: any) => ({
-          id: c.id,
-          name: c.name,
-          phone: c.phone,
-          vehicle: c.vehicle,
-          licensePlate: c.license_plate || c.licensePlate,
-          isKnownCustomer: c.is_known_customer ?? c.isKnownCustomer,
-          lastVisitReason: c.last_visit_reason || c.lastVisitReason,
-          hasOwnCar: c.has_own_car ?? c.hasOwnCar,
-          rentsFromUs: c.rents_from_us ?? c.rentsFromUs,
-          notes: c.notes,
-          createdAt: c.created_at || c.createdAt
-        })));
-      }
-
-      if (leadsRes.ok) {
-        const leadsData = await leadsRes.json();
-        setLeads(leadsData);
-      }
-    } catch (err) {
-      console.error('Failed to fetch initial data:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchInitialData();
-  }, []);
+  const { customers, loading: custLoading, addCustomer: handleAddCustomer } = useCustomers();
+  const { leads, loading: leadsLoading, updateLead: handleUpdateLead, deleteLead: handleDeleteLead, fetchLeads: handleLeadCreatedByAi } = useLeads();
+  const loading = custLoading || leadsLoading;
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -88,67 +50,6 @@ export default function App() {
       window.history.replaceState(null, '', `#${activeTab}`);
     }
   }, [activeTab]);
-
-  // Update Lead
-  const handleUpdateLead = async (leadId: string, updates: Partial<Lead>) => {
-    try {
-      const res = await fetch(`/api/leads/${leadId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
-      });
-      if (res.ok) {
-        const updatedLead = await res.json();
-        setLeads(prev => prev.map(l => l.id === leadId ? updatedLead : l));
-      }
-    } catch (err) {
-      console.error('Failed to update lead:', err);
-    }
-  };
-
-  // Delete Lead
-  const handleDeleteLead = async (leadId: string) => {
-    try {
-      const res = await fetch(`/api/leads/${leadId}`, {
-        method: 'DELETE'
-      });
-      if (res.ok) {
-        setLeads(prev => prev.filter(l => l.id !== leadId));
-      }
-    } catch (err) {
-      console.error('Failed to delete lead:', err);
-    }
-  };
-
-  // Add Customer
-  const handleAddCustomer = async (newCustData: Partial<Customer>) => {
-    try {
-      const res = await fetch('/api/customers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newCustData)
-      });
-      if (res.ok) {
-        await fetchInitialData();
-      }
-    } catch (err) {
-      console.error('Failed to add customer:', err);
-    }
-  };
-
-  // Callback when a new lead is autonomously saved by Gemini during a call
-  const handleLeadCreatedByAi = () => {
-    fetch('/api/leads')
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setLeads(data);
-        } else {
-          console.error("Failed to fetch leads from DB:", data);
-        }
-      })
-      .catch(err => console.error(err));
-  };
 
   const unreadLeadsCount = leads.filter(l => l.status === 'new').length;
 
@@ -177,12 +78,12 @@ export default function App() {
             {activeTab === 'simulator' && (
               <PhoneSimulator
                 customers={customers}
-                onLeadCreated={handleLeadCreatedByAi}
+                onLeadCreated={() => handleLeadCreatedByAi(false)}
               />
             )}
 
             {activeTab === 'leads' && (
-              <LeadDashboard
+              <Dashboard
                 leads={leads}
                 onUpdateLead={handleUpdateLead}
                 onDeleteLead={handleDeleteLead}
@@ -193,7 +94,7 @@ export default function App() {
             )}
 
             {activeTab === 'customers' && (
-              <CustomerDatabase
+              <CustomerList
                 customers={customers}
                 onAddCustomer={handleAddCustomer}
                 onSelectCustomerForCall={(cust) => {
@@ -203,7 +104,7 @@ export default function App() {
             )}
 
             {activeTab === 'settings' && (
-              <BusinessFactsSettings />
+              <Settings />
             )}
 
             {activeTab === 'analytics' && (

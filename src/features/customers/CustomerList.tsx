@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Users, Search, Car, Phone, Calendar, Shield, Tag, Plus, Check, Info, FileText } from 'lucide-react';
-import { Customer } from '../types';
+import { Customer } from '../../core/types';
 
 interface CustomerDatabaseProps {
   customers: Customer[];

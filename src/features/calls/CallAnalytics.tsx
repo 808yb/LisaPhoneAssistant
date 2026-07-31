@@ -1,6 +1,6 @@
 import React from 'react';
 import { BarChart2, TrendingUp, Clock, PhoneCall, CheckCircle, Shield, Award, Users, DollarSign, Zap } from 'lucide-react';
-import { Lead } from '../types';
+import { Lead } from '../../core/types';
 
 interface CallAnalyticsProps {
   leads: Lead[];
