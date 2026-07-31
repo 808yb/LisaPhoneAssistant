@@ -317,7 +317,7 @@ async function pregenerateScriptAudio(voiceId: string) {
         try {
           console.log(`Generating TTS for ${tag} and saving to disk.`);
           const request = {
-            input: { text: text + ' ...' },
+            input: { ssml: `<speak>${text}<break time="200ms"/></speak>` },
             voice: { languageCode: 'de-DE', name: voiceId },
             audioConfig: { 
               audioEncoding: 'MP3' as const, 
@@ -389,7 +389,7 @@ app.post('/api/voice/tts', async (req, res) => {
     if (!ttsClient) throw new Error("Google TTS Client not initialized.");
 
     const request = {
-      input: { text: text + ' ...' },
+      input: { ssml: `<speak>${text}<break time="200ms"/></speak>` },
       voice: { languageCode: 'de-DE', name: targetVoiceId },
       audioConfig: {
         audioEncoding: 'MP3' as const,
@@ -561,7 +561,7 @@ app.post('/api/twilio/incoming', async (req, res) => {
       input: ['speech'],
       action: '/api/twilio/respond',
       language: 'de-DE',
-      speechTimeout: 'auto'
+      speechTimeout: '1'
     });
 
     res.type('text/xml');
@@ -590,7 +590,7 @@ app.post('/api/twilio/respond', async (req, res) => {
         input: ['speech'],
         action: '/api/twilio/respond',
         language: 'de-DE',
-        speechTimeout: 'auto'
+        speechTimeout: '1'
       });
       res.type('text/xml');
       return res.send(twiml.toString());
@@ -638,7 +638,7 @@ app.post('/api/twilio/respond', async (req, res) => {
         input: ['speech'],
         action: '/api/twilio/respond',
         language: 'de-DE',
-        speechTimeout: 'auto'
+        speechTimeout: '1'
       });
     }
 
