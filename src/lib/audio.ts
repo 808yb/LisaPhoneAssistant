@@ -1,10 +1,25 @@
 // Audio synthesis helper for German Voice Receptionist using ElevenLabs
 
 let currentAudio: HTMLAudioElement | null = null;
+if (typeof window !== 'undefined') {
+  currentAudio = new Audio();
+}
+
+export function unlockAudio() {
+  if (currentAudio) {
+    // Play and immediately pause to unlock audio context on mobile
+    currentAudio.play().then(() => {
+      currentAudio?.pause();
+    }).catch(() => {
+      // Ignore errors for silent unlock
+    });
+  }
+}
 
 export function playLocalAudio(url: string, onEnd?: () => void): () => void {
   stopSpeaking();
-  currentAudio = new Audio(url);
+  if (!currentAudio) currentAudio = new Audio();
+  currentAudio.src = url;
   currentAudio.onended = () => { if (onEnd) onEnd(); };
   currentAudio.onerror = () => { if (onEnd) onEnd(); };
   currentAudio.play().catch(e => {
@@ -46,7 +61,9 @@ export function speakText(text: string, voiceId: string | null, onEnd?: () => vo
     })
     .then(blob => {
       const url = URL.createObjectURL(blob);
-      currentAudio = new Audio(url);
+      if (!currentAudio) currentAudio = new Audio();
+      
+      currentAudio.src = url;
       
       currentAudio.onended = () => {
         URL.revokeObjectURL(url);
@@ -77,6 +94,5 @@ export function stopSpeaking(): void {
   if (currentAudio) {
     currentAudio.pause();
     currentAudio.currentTime = 0;
-    currentAudio = null;
   }
 }

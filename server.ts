@@ -298,7 +298,7 @@ const scriptedResponses: Record<string, string> = {
 
 const DEFAULT_VOICE_ID = 'de-DE-Journey-F'; // Journey-F is commonly used for Aoede
 
-const AUDIO_CACHE_DIR = path.join(process.cwd(), '.cache', 'audio');
+const AUDIO_CACHE_DIR = path.join(process.cwd(), 'audio_cache');
 if (!fs.existsSync(AUDIO_CACHE_DIR)) {
   fs.mkdirSync(AUDIO_CACHE_DIR, { recursive: true });
 }
@@ -461,7 +461,7 @@ const updateLeadFunctionDeclaration: FunctionDeclaration = {
 
 app.post('/api/voice/interact', async (req, res) => {
   try {
-    const { phoneNumber, userMessage, history, isFirstGreeting } = req.body;
+    const { phoneNumber, userMessage, history, isFirstGreeting, hasSavedLead } = req.body;
 
     // 1. Fetch Business Facts
     let businessFacts: any = { dealershipName: 'Autohaus Kaiserslautern' };
@@ -503,6 +503,10 @@ Spreche den Kunden mit Namen an.`;
 - Telefonnummer: ${phoneNumber || 'Unbekannt'}
 - Kundenstatus: NEUKUNDE
 Begrüße höflich und frage direkt, wie du helfen kannst und wie der Name ist.`;
+    }
+
+    if (hasSavedLead) {
+      injectedContext += `\n\n[WICHTIGER SYSTEM-HINWEIS]: Du hast für diesen Anruf bereits 'save_lead' aufgerufen. Rufe es unter KEINEN UMSTÄNDEN noch einmal auf! Falls der Kunde noch ein weiteres Anliegen hat, benutze AUSSCHLIESSLICH 'update_lead'. Wenn der Kunde kein weiteres Anliegen hat (z.B. "Nein", "Nein Danke"), verabschiede dich DIREKT mit [SCRIPT_FAREWELL] ohne weitere Tools aufzurufen.`;
     }
 
     const systemInstruction = `Du bist "Lisa", die KI-Telefonempfangsdame des "${businessFacts.dealershipName}".

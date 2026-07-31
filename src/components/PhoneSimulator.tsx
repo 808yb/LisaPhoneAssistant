@@ -5,7 +5,7 @@ import {
   Car, ShieldCheck, Zap, Info, Clock, ArrowRight, MessageSquare
 } from 'lucide-react';
 import { Customer, TranscriptEntry } from '../types';
-import { speakText, stopSpeaking, playLocalAudio } from '../lib/audio';
+import { speakText, stopSpeaking, playLocalAudio, unlockAudio } from '../lib/audio';
 
 interface PhoneSimulatorProps {
   customers: Customer[];
@@ -29,6 +29,7 @@ export const PhoneSimulator: React.FC<PhoneSimulatorProps> = ({
   const [callStatus, setCallStatus] = useState<'idle' | 'dialing' | 'connected' | 'assistant_speaking' | 'customer_speaking' | 'processing' | 'ended'>('idle');
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [injectedContext, setInjectedContext] = useState<string>('');
+  const [hasSavedLead, setHasSavedLead] = useState<boolean>(false);
   const [toolCalledToast, setToolCalledToast] = useState<{ show: boolean; data: any }>({ show: false, data: null });
   const callIdRef = useRef<number>(0);
 
@@ -99,11 +100,13 @@ export const PhoneSimulator: React.FC<PhoneSimulatorProps> = ({
 
   // Start Call Procedure
   const handleStartCall = async () => {
+    unlockAudio();
     stopSpeaking();
     setIsCallActive(true);
     setCallStatus('dialing');
     setTranscript([]);
     setInjectedContext('');
+    setHasSavedLead(false);
     setToolCalledToast({ show: false, data: null });
 
     const currentPhone = selectedCustomer ? selectedCustomer.phone : customPhone;
@@ -196,7 +199,8 @@ export const PhoneSimulator: React.FC<PhoneSimulatorProps> = ({
         body: JSON.stringify({
           phoneNumber: currentPhone,
           userMessage: textToSend,
-          history: newHistory
+          history: newHistory,
+          hasSavedLead: hasSavedLead
         })
       });
 
@@ -220,6 +224,7 @@ export const PhoneSimulator: React.FC<PhoneSimulatorProps> = ({
           });
           onLeadCreated(); // Refresh leads
         } else if (data.toolCalled && data.savedLeadData) {
+          setHasSavedLead(true);
           setToolCalledToast({
             show: true,
             data: data.savedLeadData
