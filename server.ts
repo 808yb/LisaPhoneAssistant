@@ -8,7 +8,7 @@ import fs from "fs";
 import { createClient } from "@supabase/supabase-js";
 import { Readable } from "stream";
 import ws from "ws";
-import textToSpeech from "@google-cloud/text-to-speech";
+import * as textToSpeech from "@google-cloud/text-to-speech";
 import twilio from "twilio";
 
 // Polyfill WebSocket for Supabase in Node < 22
