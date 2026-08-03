@@ -607,54 +607,78 @@ app.post('/api/twilio/respond', async (req, res) => {
       return res.send(twiml.toString());
     }
 
-    history.push({ sender: 'customer', text: userSpeech, timestamp: new Date().toISOString() });
+    // Asynchronous Call Update Architecture
 
-    // Send to Gemini
-    const interactRes = await fetch(`http://localhost:${PORT}/api/voice/interact`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        phoneNumber: fromPhone,
-        userMessage: userSpeech,
-        history: history
-      })
-    });
-
-    const interactData = await interactRes.json();
-    const assistantText = interactData.text || "Ich habe Sie leider nicht verstanden.";
-
-    history.push({ sender: 'assistant', text: assistantText, timestamp: new Date().toISOString() });
-    twilioCallSessions.set(callSid, history);
-
-    // Generate Audio
-    const ttsRes = await fetch(`http://localhost:${PORT}/api/voice/tts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: assistantText })
-    });
-
-    const audioBuffer = Buffer.from(await ttsRes.arrayBuffer());
-    const audioId = Date.now().toString();
-    twilioAudioCache.set(audioId, audioBuffer);
-
+    // 1. Instantly respond with a Filler Audio + Pause (so Twilio stays alive)
     const twiml = new VoiceResponse();
-    twiml.play(`/api/twilio/audio/${audioId}`);
-
-    // Check if it's the farewell message to end the call, otherwise gather more input
-    if (assistantText.includes('Auf Wiederhören')) {
-      twiml.pause({ length: 1 });
-      twiml.hangup();
-    } else {
-      twiml.gather({
-        input: ['speech'],
-        action: '/api/twilio/respond',
-        language: 'de-DE',
-        speechTimeout: 'auto'
-      });
-    }
-
+    // Play filler WITHOUT <Gather> so it can't be interrupted immediately (prevents loops on background noise)
+    twiml.play('/api/twilio/audio/filler'); 
+    twiml.pause({ length: 15 }); // Wait up to 15 seconds for Gemini
     res.type('text/xml');
     res.send(twiml.toString());
+
+    // 2. Do the heavy lifting (LLM + TTS) in the background
+    const host = req.headers.host;
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const baseUrl = `${protocol}://${host}`;
+
+    (async () => {
+      try {
+        history.push({ sender: 'customer', text: userSpeech, timestamp: new Date().toISOString() });
+
+        // Send to Gemini
+        const interactRes = await fetch(`http://localhost:${PORT}/api/voice/interact`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            phoneNumber: fromPhone,
+            userMessage: userSpeech,
+            history: history
+          })
+        });
+
+        const interactData = await interactRes.json();
+        const assistantText = interactData.text || "Ich habe Sie leider nicht verstanden.";
+
+        history.push({ sender: 'assistant', text: assistantText, timestamp: new Date().toISOString() });
+        twilioCallSessions.set(callSid, history);
+
+        // Generate Audio for the final response
+        const ttsRes = await fetch(`http://localhost:${PORT}/api/voice/tts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: assistantText })
+        });
+
+        const audioBuffer = Buffer.from(await ttsRes.arrayBuffer());
+        const audioId = Date.now().toString();
+        twilioAudioCache.set(audioId, audioBuffer);
+
+        // 3. Update the Live Call with the new Audio
+        const updateTwiml = new VoiceResponse();
+        
+        if (assistantText.includes('Auf Wiederhören')) {
+          updateTwiml.play(`${baseUrl}/api/twilio/audio/${audioId}`);
+          updateTwiml.pause({ length: 1 });
+          updateTwiml.hangup();
+        } else {
+          const gather = updateTwiml.gather({
+            input: ['speech'],
+            action: `${baseUrl}/api/twilio/respond`,
+            language: 'de-DE',
+            speechTimeout: 'auto'
+          });
+          gather.play(`${baseUrl}/api/twilio/audio/${audioId}`);
+        }
+
+        if (twilioClient) {
+          // Asynchronously replace the <Pause> with the generated Audio!
+          await twilioClient.calls(callSid).update({ twiml: updateTwiml.toString() });
+        }
+      } catch (e) {
+        console.error("Background Async Error:", e);
+      }
+    })();
   } catch (err) {
     console.error('Twilio Respond Error:', err);
     const twiml = new VoiceResponse();
@@ -666,6 +690,17 @@ app.post('/api/twilio/respond', async (req, res) => {
 
 app.get('/api/twilio/audio/:id', (req, res) => {
   const audioId = req.params.id;
+  
+  if (audioId === 'filler') {
+    // Serve the pre-generated filler audio
+    const fillerKey = `Einen kleinen Moment bitte.-${DEFAULT_VOICE_ID}`;
+    const fillerBuffer = ttsCache.get(fillerKey);
+    if (fillerBuffer) {
+      res.set('Content-Type', 'audio/mp3');
+      return res.send(fillerBuffer);
+    }
+  }
+
   const buffer = twilioAudioCache.get(audioId);
   if (!buffer) {
     return res.status(404).send('Audio not found');

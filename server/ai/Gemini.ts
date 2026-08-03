@@ -11,6 +11,7 @@ export const scriptedResponses: Record<string, string> = {
   '[SCRIPT_OPENING_HOURS]': 'Unsere Öffnungszeiten sind von Montag bis Freitag von 08:00 bis 18:00 Uhr und Samstag von 09:00 bis 14:00 Uhr. Am Sonntag haben wir geschlossen.',
   '[SCRIPT_ANYTHING_ELSE]': 'Ich habe Ihr Anliegen gespeichert. Gibt es noch etwas, was ich heute für Sie tun kann?',
   '[SCRIPT_FILLER_APPOINTMENT]': 'Ich schaue kurz nach freien Terminen um.',
+  '[SCRIPT_FILLER_WAIT]': 'Einen kleinen Moment bitte.',
   '[SCRIPT_FAREWELL]': 'Vielen Dank! Ich habe Ihr Anliegen an unser Team weitergeleitet. Auf Wiederhören.'
 };
 
