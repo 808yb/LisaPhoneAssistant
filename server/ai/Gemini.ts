@@ -2,6 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 import { saveLeadFunctionDeclaration, updateLeadFunctionDeclaration } from "./Tools";
 import { PromptBuilder } from "./PromptBuilder";
 import { createClient } from "@supabase/supabase-js";
+import { metrics } from "../metrics";
 
 export const scriptedResponses: Record<string, string> = {
   '[SCRIPT_GREETING]': 'Autohaus Kaiserslautern, Guten Tag. Hier ist Lisa, Ihre KI-Assistentin. Dieses Gespräch wird nicht aufgezeichnet. Wie kann ich Ihnen helfen?',
@@ -59,6 +60,7 @@ export class GeminiService {
       contents.push({ role: 'user', parts: [{ text: userMessage }] });
     }
 
+    const t0 = performance.now();
     const response = await this.ai.models.generateContent({
       model: "gemini-3.6-flash",
       contents,
@@ -68,6 +70,7 @@ export class GeminiService {
         tools: [{ functionDeclarations: [saveLeadFunctionDeclaration, updateLeadFunctionDeclaration] }]
       }
     });
+    metrics.record('gemini', performance.now() - t0);
 
     let assistantText = response.text || '';
 

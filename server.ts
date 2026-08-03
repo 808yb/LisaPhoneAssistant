@@ -10,6 +10,7 @@ import { Readable } from "stream";
 import ws from "ws";
 import * as textToSpeech from "@google-cloud/text-to-speech";
 import twilio from "twilio";
+import { metrics } from "./server/metrics";
 
 // Polyfill WebSocket for Supabase in Node < 22
 globalThis.WebSocket = ws as any;
@@ -42,6 +43,10 @@ const supabase = createClient(supabaseUrl || '', supabaseKey || '');
 // ==========================================
 // 2. REST API ENDPOINTS
 // ==========================================
+
+app.get('/api/metrics/latency', (req, res) => {
+  res.json(metrics.getStats());
+});
 
 // Normalize phone number for matching
 function normalizePhone(p: string): string {
@@ -397,7 +402,9 @@ app.post('/api/voice/tts', async (req, res) => {
       },
     };
 
+    const t0 = performance.now();
     const [response] = await ttsClient.synthesizeSpeech(request);
+    metrics.record('tts', performance.now() - t0);
 
     if (response.audioContent) {
       const audioBuffer = Buffer.from(response.audioContent as Uint8Array);
@@ -432,6 +439,7 @@ app.post('/api/voice/interact', async (req, res) => {
 
     // 1. Fetch Business Facts
     let businessFacts: any = { dealershipName: 'Autohaus Kaiserslautern' };
+    const t0 = performance.now();
     const { data: bf } = await supabase.from('business_facts').select('*').eq('id', 1).single();
     if (bf) {
       businessFacts = {
@@ -453,6 +461,7 @@ app.post('/api/voice/interact', async (req, res) => {
     // 2. Lookup Customer
     const cleanPhone = normalizePhone(phoneNumber || '');
     const { data: allCusts } = await supabase.from('customers').select('*');
+    metrics.record('db', performance.now() - t0);
     const matchedCustomer = allCusts?.find(c => normalizePhone(c.phone) === cleanPhone);
 
     const aiService = getAiClient();
@@ -504,11 +513,13 @@ app.post('/api/twilio/call', async (req, res) => {
       return res.status(500).json({ error: 'TWILIO_PHONE_NUMBER not configured.' });
     }
 
+    const t0 = performance.now();
     const call = await twilioClient.calls.create({
       url: `${ngrokUrl}/api/twilio/incoming`, // Point to our incoming webhook to start the interaction
       to: toPhone,
       from: twilioPhone
     });
+    metrics.record('twilio', performance.now() - t0);
 
     res.json({ success: true, callSid: call.sid });
   } catch (error: any) {

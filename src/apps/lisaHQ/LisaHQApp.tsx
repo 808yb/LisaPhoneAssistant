@@ -3,6 +3,7 @@ import { Sidebar, HQTabType } from './components/Sidebar';
 import { Building2, Wand2 } from 'lucide-react';
 import { FleetView } from './features/fleet/FleetView';
 import { Dashboard } from './features/dashboard/Dashboard';
+import { LatencyView } from './features/dashboard/LatencyView';
 import { BusinessesTable } from './features/businesses/BusinessesTable';
 import { LiveCallsTable } from './features/calls/LiveCallsTable';
 
@@ -13,6 +14,8 @@ export default function LisaHQApp() {
     switch (activeTab) {
       case 'dashboard':
         return <Dashboard />;
+      case 'latency':
+        return <LatencyView />;
       case 'fleet':
         return <FleetView />;
       case 'businesses':

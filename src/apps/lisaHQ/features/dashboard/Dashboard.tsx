@@ -1,7 +1,43 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Building2, PhoneCall, Calendar, Euro, Percent, Activity } from 'lucide-react';
 
+interface Metrics {
+  gemini: { average: number; latest: number };
+  tts: { average: number; latest: number };
+  db: { average: number; latest: number };
+  totalAverage: number;
+}
+
 export const Dashboard: React.FC = () => {
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
+
+  useEffect(() => {
+    const fetchMetrics = async () => {
+      try {
+        const res = await fetch('/api/metrics/latency');
+        if (res.ok) {
+          const data = await res.json();
+          setMetrics(data);
+        }
+      } catch (err) {
+        console.error('Failed to fetch metrics', err);
+      }
+    };
+    
+    fetchMetrics();
+    const interval = setInterval(fetchMetrics, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const totalLatency = metrics?.totalAverage || 0;
+  let latencyColor = 'text-blue-600';
+  let latencyBg = 'bg-blue-50';
+  if (totalLatency > 0) {
+    if (totalLatency < 800) { latencyColor = 'text-emerald-600'; latencyBg = 'bg-emerald-50'; }
+    else if (totalLatency < 2000) { latencyColor = 'text-amber-600'; latencyBg = 'bg-amber-50'; }
+    else { latencyColor = 'text-red-600'; latencyBg = 'bg-red-50'; }
+  }
+
   const kpis = [
     { label: 'Unternehmen', value: '34', icon: Building2, color: 'text-blue-600', bg: 'bg-blue-50' },
     { label: 'Lisa Online', value: '34 / 34', icon: Activity, color: 'text-emerald-600', bg: 'bg-emerald-50' },
@@ -10,7 +46,7 @@ export const Dashboard: React.FC = () => {
     { label: 'Gebuchte Termine', value: '189', icon: Calendar, color: 'text-purple-600', bg: 'bg-purple-50' },
     { label: 'MRR', value: '€7,240', icon: Euro, color: 'text-emerald-600', bg: 'bg-emerald-50' },
     { label: 'Monatl. Churn', value: '0', icon: Percent, color: 'text-slate-600', bg: 'bg-slate-50' },
-    { label: 'Ø KI-Latenz', value: '620 ms', icon: Activity, color: 'text-blue-600', bg: 'bg-blue-50' }
+    { label: 'Ø KI-Latenz', value: totalLatency ? `${totalLatency} ms` : '...', icon: Activity, color: latencyColor, bg: latencyBg }
   ];
 
   const activities = [
@@ -37,7 +73,7 @@ export const Dashboard: React.FC = () => {
               </div>
               <div>
                 <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{kpi.label}</div>
-                <div className="text-2xl font-bold text-slate-800">{kpi.value}</div>
+                <div className={`text-2xl font-bold text-slate-800 ${kpi.label === 'Ø KI-Latenz' ? kpi.color : ''}`}>{kpi.value}</div>
               </div>
             </div>
           );

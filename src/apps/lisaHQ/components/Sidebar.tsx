@@ -30,7 +30,8 @@ export type HQTabType =
   | 'settings'
   | 'support'
   | 'growth'
-  | 'fleet';
+  | 'fleet'
+  | 'latency';
 
 interface SidebarProps {
   activeTab: HQTabType;
@@ -43,6 +44,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
       title: 'Übersicht',
       items: [
         { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+        { id: 'latency', label: 'Systemlatenz', icon: Activity },
         { id: 'fleet', label: 'Betriebsstatus', icon: Radar, badge: 'Beta' },
         { id: 'businesses', label: 'Unternehmen', icon: Building2 },
         { id: 'calls', label: 'Live-Anrufe', icon: PhoneCall },
