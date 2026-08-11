@@ -1,7 +1,16 @@
 import { Customer } from '../../../../core/types';
+import { supabase } from '../../../../core/supabaseClient';
+
+const getHeaders = async () => {
+  const { data: { session } } = await supabase.auth.getSession();
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': session ? `Bearer ${session.access_token}` : ''
+  };
+};
 
 export const fetchCustomers = async (): Promise<Customer[]> => {
-  const res = await fetch('/api/customers');
+  const res = await fetch('/api/customers', { headers: await getHeaders() });
   if (!res.ok) throw new Error('Failed to fetch customers');
   const data = await res.json();
   
@@ -20,11 +29,22 @@ export const fetchCustomers = async (): Promise<Customer[]> => {
   }));
 };
 
-export const addCustomer = async (newCustData: Partial<Customer>): Promise<void> => {
+export const addCustomer = async (cust: Partial<Customer>): Promise<Customer> => {
   const res = await fetch('/api/customers', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(newCustData)
+    headers: await getHeaders(),
+    body: JSON.stringify(cust)
   });
   if (!res.ok) throw new Error('Failed to add customer');
+  return res.json();
+};
+
+export const updateCustomer = async (id: number, cust: Partial<Customer>): Promise<Customer> => {
+  const res = await fetch(`/api/customers/${id}`, {
+    method: 'PUT',
+    headers: await getHeaders(),
+    body: JSON.stringify(cust)
+  });
+  if (!res.ok) throw new Error('Failed to update customer');
+  return res.json();
 };

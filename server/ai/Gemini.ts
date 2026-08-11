@@ -31,14 +31,21 @@ export class GeminiService {
     isFirstGreeting: boolean,
     hasSavedLead: boolean,
     businessFacts: any,
-    matchedCustomer: any
+    matchedCustomer: any,
+    business_id: string
   ) {
     const injectedContext = PromptBuilder.buildContext(matchedCustomer, phoneNumber, hasSavedLead);
 
     if (isFirstGreeting) {
+      let greetingText = businessFacts.scriptObj?.core_greeting?.[0] || 'Hallo, wie kann ich helfen?';
+      if (businessFacts.scriptObj?.core_ai_disclosure?.[0]) {
+        greetingText += ' ' + businessFacts.scriptObj.core_ai_disclosure[0];
+      }
+
       return {
         success: true,
-        text: scriptedResponses['[SCRIPT_GREETING]'],
+        text: greetingText,
+        fillers: businessFacts.scriptObj?.fillers || [],
         injectedContext,
         toolCalled: false,
         savedLeadData: null,
@@ -74,11 +81,25 @@ export class GeminiService {
     metrics.record('gemini', performance.now() - t0);
 
     let assistantText = response.text || '';
+    let endCall = false;
 
-    for (const [tag, text] of Object.entries(scriptedResponses)) {
-      if (assistantText.includes(tag)) {
-        assistantText = text;
-        break;
+    const s = businessFacts.scriptObj;
+    if (s) {
+      if (s.core_ai_disclosure?.length && assistantText.includes('[CORE_DISCLOSURE]')) {
+        assistantText = s.core_ai_disclosure[0];
+      }
+      if (assistantText.includes('[CORE_FAREWELL]') || /auf wiederhören|schönen tag noch|verabschiede mich/i.test(assistantText)) {
+        if (assistantText.includes('[CORE_FAREWELL]')) {
+          assistantText = s.core_farewell?.length ? s.core_farewell[0] : 'Vielen Dank. Ich habe Ihr Anliegen gespeichert. Auf Wiederhören.';
+        }
+        endCall = true;
+      } else if (s.custom_nodes) {
+        for (const n of s.custom_nodes) {
+          if (assistantText.includes(`[${n.tag}]`) && n.texts?.length) {
+            assistantText = n.texts[0];
+            break;
+          }
+        }
       }
     }
 
@@ -95,6 +116,7 @@ export class GeminiService {
 
           savedLeadData = {
             id: 'lead-' + Date.now().toString(36),
+            business_id: business_id,
             caller_name: args.callerName || (matchedCustomer?.name || 'Unbekannt'),
             phone_number: args.phoneNumber || phoneNumber,
             category: args.category || 'general',
@@ -109,6 +131,24 @@ export class GeminiService {
           };
 
           await this.supabase.from('leads').insert(savedLeadData);
+
+          // Auto-create customer if it's a new caller
+          if (!matchedCustomer && args.callerName) {
+            try {
+              await this.supabase.from('customers').insert({
+                business_id: business_id,
+                name: args.callerName,
+                phone: phoneNumber,
+                notes: 'Automatisch durch Lisa nach dem ersten Anruf angelegt.',
+                metadata: {
+                  vehicle: args.vehicleInfo || null,
+                  isKnownCustomer: false
+                }
+              });
+            } catch (err) {
+              console.error('Failed to auto-create customer', err);
+            }
+          }
 
           try {
             const followUpRes = await this.ai.models.generateContent({
@@ -125,31 +165,44 @@ export class GeminiService {
             });
             if (followUpRes.text) {
               assistantText = followUpRes.text;
-              for (const [tag, text] of Object.entries(scriptedResponses)) {
-                if (assistantText.includes(tag)) {
-                  assistantText = text;
-                  break;
+              if (s && s.core_ai_disclosure?.length && assistantText.includes('[CORE_DISCLOSURE]')) {
+                assistantText = s.core_ai_disclosure[0];
+              }
+              if (assistantText.includes('[CORE_FAREWELL]') || /auf wiederhören|schönen tag|verabschiede|auf wiedersehen/i.test(assistantText)) {
+                if (assistantText.includes('[CORE_FAREWELL]')) {
+                  assistantText = s?.core_farewell?.length ? s.core_farewell[0] : 'Vielen Dank. Ich habe Ihr Anliegen gespeichert. Auf Wiederhören.';
                 }
+                endCall = true;
               }
             }
           } catch (e) {
-            assistantText = scriptedResponses['[SCRIPT_ANYTHING_ELSE]'];
+            assistantText = "Danke für Ihren Anruf, wir melden uns!";
+            endCall = true;
           }
         } else if (call.name === 'update_lead') {
           toolCalled = true;
-          const args: any = call.args;
+          const args = call.args as any;
+          const leadId = args.leadId;
           const additionalConcern = args.additionalConcern;
 
           const { data: latestLeads } = await this.supabase.from('leads')
-            .select('id, concern')
-            .eq('phone_number', phoneNumber || '')
+            .select('*')
+            .eq('business_id', business_id)
             .order('created_at', { ascending: false })
             .limit(1);
 
           if (latestLeads && latestLeads.length > 0) {
-            const leadId = latestLeads[0].id;
-            const updatedConcern = latestLeads[0].concern + "\n\n[ERGÄNZUNG]: " + additionalConcern;
-            await this.supabase.from('leads').update({ concern: updatedConcern, updated_at: new Date().toISOString() }).eq('id', leadId);
+            const dbLeadId = latestLeads[0].id;
+            const existingConcern = latestLeads[0].concern || '';
+            const updatedConcern = existingConcern + '\n\nErgänzung:\n' + additionalConcern;
+            await this.supabase.from('leads').update({ concern: updatedConcern, updated_at: new Date().toISOString() }).eq('id', dbLeadId).eq('business_id', business_id);
+            updatedLeadData = { id: dbLeadId, concern: updatedConcern };
+          } else if (leadId) {
+            // fallback
+            const { data: leadData } = await this.supabase.from('leads').select('concern').eq('id', leadId).single();
+            const existingConcern = leadData?.concern || '';
+            const updatedConcern = existingConcern + '\n\nErgänzung:\n' + additionalConcern;
+            await this.supabase.from('leads').update({ concern: updatedConcern, updated_at: new Date().toISOString() }).eq('id', leadId).eq('business_id', business_id);
             updatedLeadData = { id: leadId, concern: updatedConcern };
           }
 
@@ -168,15 +221,19 @@ export class GeminiService {
             });
             if (followUpRes.text) {
               assistantText = followUpRes.text;
-              for (const [tag, text] of Object.entries(scriptedResponses)) {
-                if (assistantText.includes(tag)) {
-                  assistantText = text;
-                  break;
+              if (s && s.core_ai_disclosure?.length && assistantText.includes('[CORE_DISCLOSURE]')) {
+                assistantText = s.core_ai_disclosure[0];
+              }
+              if (assistantText.includes('[CORE_FAREWELL]') || /auf wiederhören|schönen tag|verabschiede|auf wiedersehen/i.test(assistantText)) {
+                if (assistantText.includes('[CORE_FAREWELL]')) {
+                  assistantText = s?.core_farewell?.length ? s.core_farewell[0] : 'Vielen Dank. Ich habe Ihr Anliegen gespeichert. Auf Wiederhören.';
                 }
+                endCall = true;
               }
             }
           } catch (e) {
-            assistantText = scriptedResponses['[SCRIPT_ANYTHING_ELSE]'];
+            assistantText = "Vielen Dank, wir haben alles notiert!";
+            endCall = true;
           }
         }
       }
@@ -187,6 +244,7 @@ export class GeminiService {
       text: assistantText,
       injectedContext,
       toolCalled,
+      endCall,
       savedLeadData: savedLeadData ? { callerName: savedLeadData.caller_name, category: savedLeadData.category, concern: savedLeadData.concern } : null,
       updatedLeadData,
       matchedCustomer: matchedCustomer ? { name: matchedCustomer.name, vehicle: matchedCustomer.vehicle } : null

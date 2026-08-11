@@ -31,14 +31,16 @@ export type HQTabType =
   | 'support'
   | 'growth'
   | 'fleet'
+  | 'scripts'
   | 'latency';
 
 interface SidebarProps {
   activeTab: HQTabType;
   setActiveTab: (tab: HQTabType) => void;
+  onLogout?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, onLogout }) => {
   const navGroups = [
     {
       title: 'Übersicht',
@@ -61,6 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
     {
       title: 'Betrieb',
       items: [
+        { id: 'scripts', label: 'Script Builder', icon: Wand2 },
         { id: 'onboarding', label: 'Onboarding', icon: Wand2 },
         { id: 'templates', label: 'Vorlagen', icon: Copy },
         { id: 'support', label: 'Support', icon: LifeBuoy },
@@ -124,6 +127,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
             </div>
           </div>
         ))}
+        {onLogout && (
+          <button 
+            onClick={onLogout}
+            className="mt-4 w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors border border-slate-700"
+          >
+            Abmelden
+          </button>
+        )}
       </div>
     </div>
   );

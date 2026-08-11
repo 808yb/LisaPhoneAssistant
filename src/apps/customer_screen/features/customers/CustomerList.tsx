@@ -5,18 +5,23 @@ import { Customer } from '../../../../core/types';
 interface CustomerDatabaseProps {
   customers: Customer[];
   onAddCustomer: (customer: Partial<Customer>) => void;
+  onUpdateCustomer?: (id: number, customer: Partial<Customer>) => void;
   onSelectCustomerForCall: (customer: Customer) => void;
 }
 
 export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
   customers,
   onAddCustomer,
+  onUpdateCustomer,
   onSelectCustomerForCall
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [filterType, setFilterType] = useState<'all' | 'known' | 'rental' | 'has_car'>('all');
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
   const [activeCustomerDetail, setActiveCustomerDetail] = useState<Customer | null>(null);
+  const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [editNotes, setEditNotes] = useState('');
+  const [editVehicle, setEditVehicle] = useState('');
 
   // New Customer Form State
   const [newName, setNewName] = useState('');
@@ -328,8 +333,18 @@ export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
             <div className="space-y-3 text-xs">
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
                 <span className="text-slate-500 font-bold uppercase tracking-wider text-[10px] block">Fahrzeug & Kennzeichen</span>
-                <p className="text-slate-800 font-medium">{activeCustomerDetail.vehicle || 'Kein Fahrzeug'}</p>
-                {activeCustomerDetail.licensePlate && (
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={editVehicle}
+                    onChange={e => setEditVehicle(e.target.value)}
+                    placeholder="z.B. BMW M3"
+                    className="w-full mt-1 border border-slate-300 rounded p-1.5 text-slate-800 focus:outline-none"
+                  />
+                ) : (
+                  <p className="text-slate-800 font-medium">{activeCustomerDetail.vehicle || 'Kein Fahrzeug'}</p>
+                )}
+                {!isEditing && activeCustomerDetail.licensePlate && (
                   <p className="text-slate-600 font-mono">Kennzeichen: {activeCustomerDetail.licensePlate}</p>
                 )}
               </div>
@@ -340,8 +355,62 @@ export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
               </div>
 
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
-                <span className="text-slate-500 font-bold uppercase tracking-wider text-[10px] block">Interne Kunden-Notiz für KI-Kontext</span>
-                <p className="text-slate-700 leading-relaxed">{activeCustomerDetail.notes || 'Keine spezifischen Kundenhinweise.'}</p>
+                <span className="text-slate-500 font-bold uppercase tracking-wider text-[10px] block flex justify-between items-center">
+                  <span>Interne Kunden-Notiz für KI-Kontext</span>
+                  {!isEditing && onUpdateCustomer && (
+                    <button 
+                      onClick={() => {
+                        setIsEditing(true);
+                        setEditNotes(activeCustomerDetail.notes || '');
+                        setEditVehicle(activeCustomerDetail.vehicle || '');
+                      }}
+                      className="text-blue-600 hover:text-blue-800"
+                    >
+                      Bearbeiten
+                    </button>
+                  )}
+                </span>
+                {isEditing ? (
+                  <div className="space-y-2 mt-2">
+                    <textarea
+                      rows={3}
+                      value={editNotes}
+                      onChange={e => setEditNotes(e.target.value)}
+                      placeholder="z.B. reiner Mietkunde..."
+                      className="w-full border border-slate-300 rounded p-2 text-slate-800 focus:outline-none"
+                    />
+                    <div className="flex justify-end space-x-2">
+                      <button 
+                        onClick={() => setIsEditing(false)}
+                        className="px-3 py-1 bg-slate-200 hover:bg-slate-300 rounded text-slate-700 font-medium text-xs"
+                      >
+                        Abbrechen
+                      </button>
+                      <button 
+                        onClick={() => {
+                          if (onUpdateCustomer && activeCustomerDetail.id) {
+                            onUpdateCustomer(activeCustomerDetail.id, {
+                              ...activeCustomerDetail,
+                              notes: editNotes.trim(),
+                              vehicle: editVehicle.trim() || null
+                            });
+                            setActiveCustomerDetail({
+                              ...activeCustomerDetail,
+                              notes: editNotes.trim(),
+                              vehicle: editVehicle.trim() || null
+                            });
+                            setIsEditing(false);
+                          }
+                        }}
+                        className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium text-xs"
+                      >
+                        Speichern
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-slate-700 leading-relaxed">{activeCustomerDetail.notes || 'Keine spezifischen Kundenhinweise.'}</p>
+                )}
               </div>
             </div>
 

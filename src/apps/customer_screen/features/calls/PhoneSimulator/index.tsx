@@ -54,6 +54,16 @@ export const PhoneSimulator: React.FC<PhoneSimulatorProps> = ({
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcript, callStatus]);
 
+  useEffect(() => {
+    if (!isCallActive && selectedCustomer === null) {
+      setCustomPhone(generateRandomPhone());
+    }
+  }, [isCallActive, selectedCustomer]);
+
+  const generateRandomPhone = () => {
+    return '017' + Math.floor(10000000 + Math.random() * 90000000).toString();
+  };
+
   const handleSelectCustomer = (cust: Customer | null) => {
     if (isCallActive) return;
     setSelectedCustomer(cust);
@@ -61,7 +71,7 @@ export const PhoneSimulator: React.FC<PhoneSimulatorProps> = ({
       setCustomPhone(cust.phone);
       setCustomName(cust.name);
     } else {
-      setCustomPhone('0170 98765432');
+      setCustomPhone(generateRandomPhone());
       setCustomName('Unbekannter Neukunde');
     }
   };
@@ -171,6 +181,7 @@ export const PhoneSimulator: React.FC<PhoneSimulatorProps> = ({
             selectedCustomer={selectedCustomer}
             onSelectCustomer={handleSelectCustomer}
             isCallActive={isCallActive}
+            customPhone={customPhone}
           />
         </div>
 

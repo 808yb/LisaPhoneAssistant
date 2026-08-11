@@ -1,12 +1,16 @@
 import { useState, useEffect } from 'react';
 import { Lead } from '../../../../../core/types';
 import { fetchLeads as apiFetchLeads, updateLead as apiUpdateLead, deleteLead as apiDeleteLead } from '../dashboard.service';
+import { supabase } from '../../../../../core/supabaseClient';
 
 export const useLeads = () => {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
   const fetchLeads = async (showLoading = true) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return; // Prevent 401 on initial mount before login
+
     if (showLoading) setLoading(true);
     try {
       const data = await apiFetchLeads();
@@ -20,6 +24,16 @@ export const useLeads = () => {
 
   useEffect(() => {
     fetchLeads();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN') {
+        fetchLeads(false);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const updateLead = async (leadId: string, updates: Partial<Lead>) => {

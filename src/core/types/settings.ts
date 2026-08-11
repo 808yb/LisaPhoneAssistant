@@ -1,16 +1,23 @@
 export interface BusinessFacts {
-  dealershipName: string;
+  businessName: string;
   address: string;
   phone: string;
   email: string;
-  openingHours: {
-    weekdays: string;
-    saturday: string;
-    sunday: string;
-  };
-  workshopHours: string;
-  rentalRates: string;
+  openingHours: any;
+  secondaryHours: any;
+  pricing: string;
   emergencyNumber: string;
   specialOffers: string;
   guardrailsPrompt: string;
+  products: string;
+  services: string;
+  teamMembers: string;
+  appointmentRules: string;
+  knowledgeBase: string;
+  permissions: {
+    mentionPrices: boolean;
+    mentionEmployees: boolean;
+    bookAppointments: boolean;
+    technicalAdvice: boolean;
+  };
 }

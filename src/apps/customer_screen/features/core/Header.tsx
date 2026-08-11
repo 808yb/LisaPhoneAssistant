@@ -8,13 +8,15 @@ interface HeaderProps {
   setActiveTab: (tab: TabType) => void;
   unreadCallsCount?: number;
   onQuickCall: () => void;
+  onLogout?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   activeTab,
   setActiveTab,
   unreadCallsCount = 0,
-  onQuickCall
+  onQuickCall,
+  onLogout
 }) => {
   const navItems = [
     { id: 'dashboard', label: 'Übersicht', icon: LayoutDashboard, color: 'text-slate-500', activeColor: 'text-blue-700', activeBg: 'bg-blue-50 border-blue-200' },
@@ -67,13 +69,21 @@ export const Header: React.FC<HeaderProps> = ({
             })}
           </nav>
 
-          {/* Live Status & Quick Action */}
-          <div className="flex items-center justify-end space-x-3 w-48">
-            <div className="hidden sm:flex items-center space-x-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-mono text-emerald-400">
-              <div className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399] animate-pulse"></div>
-              <span className="uppercase tracking-wider font-semibold text-[10px]">Lisa ist Aktiv</span>
-            </div>
+          {/* Actions */}
+        <div className="flex items-center gap-4 border-l border-slate-100 pl-4 ml-2">
+          <div className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-full border border-emerald-200">
+            <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+            <span className="text-xs font-bold tracking-wide">LISA IST AKTIV</span>
           </div>
+          {onLogout && (
+            <button 
+              onClick={onLogout}
+              className="text-xs font-medium text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-full transition-colors"
+            >
+              Abmelden
+            </button>
+          )}
+        </div>
         </div>
       </div>
 

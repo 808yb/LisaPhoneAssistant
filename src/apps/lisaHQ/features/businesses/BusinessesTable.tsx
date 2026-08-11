@@ -1,14 +1,49 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Building2, Search, Filter, MoreVertical, ExternalLink } from 'lucide-react';
+import { supabase } from '../../../../core/supabaseClient';
 
 export const BusinessesTable: React.FC = () => {
-  const businesses = [
-    { name: 'Autohaus Kaiser', status: 'Online', statusColor: 'text-emerald-600 bg-emerald-50', plan: 'Professional', calls: 34, appointments: 12, knowledge: '96%', lastActive: 'Vor 2 Min.' },
-    { name: 'BMW Center Mainz', status: 'Online', statusColor: 'text-emerald-600 bg-emerald-50', plan: 'Enterprise', calls: 128, appointments: 45, knowledge: '100%', lastActive: 'Gerade eben' },
-    { name: 'Dental Müller', status: 'Problem', statusColor: 'text-amber-600 bg-amber-50', plan: 'Starter', calls: 12, appointments: 3, knowledge: '82%', lastActive: 'Vor 15 Min.' },
-    { name: 'Hotel Adler', status: 'Online', statusColor: 'text-emerald-600 bg-emerald-50', plan: 'Professional', calls: 45, appointments: 8, knowledge: '91%', lastActive: 'Vor 5 Min.' },
-    { name: 'Autohaus Weber', status: 'Offline', statusColor: 'text-rose-600 bg-rose-50', plan: 'Starter', calls: 0, appointments: 0, knowledge: '45%', lastActive: 'Vor 2 Std.' }
-  ];
+  const [businesses, setBusinesses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadBusinesses() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+        
+        const res = await fetch('/api/admin/businesses', {
+          headers: { 'Authorization': `Bearer ${session.access_token}` }
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          // Map DB data and inject dummy data for metrics
+          const mapped = data.map((b: any) => ({
+            id: b.id,
+            name: b.name,
+            status: 'Online', 
+            statusColor: 'text-emerald-600 bg-emerald-50', 
+            plan: 'Professional', 
+            calls: Math.floor(Math.random() * 50), 
+            appointments: Math.floor(Math.random() * 10), 
+            knowledge: '96%', 
+            lastActive: 'Gerade eben'
+          }));
+          setBusinesses(mapped);
+        }
+      } catch (err) {
+        console.error('Failed to load businesses:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadBusinesses();
+  }, []);
+
+  if (loading) {
+    return <div className="p-8 text-slate-500">Lade Unternehmen...</div>;
+  }
 
   return (
     <div className="space-y-6 max-w-7xl">

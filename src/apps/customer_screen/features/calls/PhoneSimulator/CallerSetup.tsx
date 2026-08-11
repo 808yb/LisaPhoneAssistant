@@ -7,13 +7,15 @@ interface CallerSetupProps {
   selectedCustomer: Customer | null;
   onSelectCustomer: (customer: Customer | null) => void;
   isCallActive: boolean;
+  customPhone?: string;
 }
 
 export const CallerSetup: React.FC<CallerSetupProps> = ({
   customers,
   selectedCustomer,
   onSelectCustomer,
-  isCallActive
+  isCallActive,
+  customPhone
 }) => {
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-lg">
@@ -39,7 +41,9 @@ export const CallerSetup: React.FC<CallerSetupProps> = ({
         >
           <div className="flex items-center justify-between">
             <span className="font-medium text-xs text-slate-900">❓ Unbekannter Neukunde</span>
-            <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono border border-slate-200">0170 98765432</span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono border border-slate-200">
+              {selectedCustomer === null && customPhone ? customPhone : 'Neue Nummer...'}
+            </span>
           </div>
           <p className="text-[11px] text-slate-500 mt-1">Kein Datenbank-Eintrag. KI fragt aktiv nach Kontaktdaten.</p>
         </button>
@@ -72,7 +76,7 @@ export const CallerSetup: React.FC<CallerSetupProps> = ({
                     {cust.licensePlate && <span className="text-slate-500 font-mono">({cust.licensePlate})</span>}
                   </span>
                 ) : (
-                  <span className="text-amber-600/90 font-medium">Reine Mietkundin</span>
+                  <span className="text-amber-600/90 font-medium">Mietkunde</span>
                 )}
 
                 {cust.isKnownCustomer && (

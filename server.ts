@@ -11,6 +11,8 @@ import ws from "ws";
 import * as textToSpeech from "@google-cloud/text-to-speech";
 import twilio from "twilio";
 import { metrics } from "./server/metrics";
+import * as cheerio from "cheerio";
+import { GoogleGenAI } from "@google/genai";
 
 // Polyfill WebSocket for Supabase in Node < 22
 globalThis.WebSocket = ws as any;
@@ -31,18 +33,247 @@ const VoiceResponse = twilio.twiml.VoiceResponse;
 // ==========================================
 // 1. SUPABASE CLIENT
 // ==========================================
-const supabaseUrl = `https://${process.env.SUPABASE_PROJECT_ID}.supabase.co`;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabaseUrl = process.env.VITE_SUPABASE_URL || `https://${process.env.SUPABASE_PROJECT_ID}.supabase.co`;
+const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!process.env.SUPABASE_PROJECT_ID || !supabaseKey) {
   console.warn("Supabase credentials not found in env vars. Please configure SUPABASE_PROJECT_ID and SUPABASE_ANON_KEY.");
 }
 
-const supabase = createClient(supabaseUrl || '', supabaseKey || '');
+// Global Anon client
+export const supabase = createClient(supabaseUrl || '', supabaseKey || '');
+
+// Global Admin client (bypasses RLS)
+export const supabaseAdmin = createClient(supabaseUrl || '', supabaseServiceKey || '');
+
+// Auth & Context Middleware
+app.use(async (req, res, next) => {
+  // 1. Check if it's a Twilio request (webhook)
+  const isTwilioRoute = req.path.startsWith('/api/twilio/') || req.path.startsWith('/api/voice/');
+  const twilioNumber = req.body?.To || req.query?.To;
+  
+  if (isTwilioRoute && twilioNumber) {
+    const { data: business } = await supabaseAdmin
+      .from('businesses')
+      .select('id')
+      .eq('twilio_phone_number', twilioNumber)
+      .single();
+      
+    if (business) {
+      (req as any).business_id = business.id;
+    }
+    return next();
+  }
+
+  // 2. Check for Frontend JWT
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+    
+    if (user && !error) {
+      (req as any).user = user;
+      
+      console.log(`[Auth] User ${user.email} authenticated`);
+      
+      // Check if superadmin
+      const { data: admin } = await supabaseAdmin.from('lisahq_admins').select('id').eq('email', user.email).maybeSingle();
+      if (admin) {
+        console.log(`[Auth] User is superadmin`);
+        (req as any).is_superadmin = true;
+        return next();
+      }
+      
+      // Check if business user
+      const { data: bizUser } = await supabaseAdmin.from('business_users').select('business_id').eq('user_id', user.id).maybeSingle();
+      if (bizUser) {
+        console.log(`[Auth] User is business user for ${bizUser.business_id}`);
+        (req as any).business_id = bizUser.business_id;
+        return next();
+      } else {
+        console.log(`[Auth] User not found in business_users! ID: ${user.id}`);
+      }
+    } else {
+      console.log(`[Auth] Supabase auth error:`, error);
+    }
+  } else {
+    console.log(`[Auth] No valid auth header found for ${req.path}`);
+  }
+
+  // List of public API endpoints that don't require JWT authentication
+  const publicApiRoutes = [
+    '/api/metrics',
+    '/api/twilio/call',
+    '/api/twilio/incoming',
+    '/api/twilio/respond',
+    '/api/twilio/audio',
+    '/api/voice/interact',
+    '/api/voice/tts',
+    '/api/voice/voices'
+  ];
+
+  const isPublicApi = publicApiRoutes.some(route => req.path.startsWith(route));
+
+  if (req.path.startsWith('/api/') && !isPublicApi && !(req as any).user && !(req as any).business_id) {
+    console.log(`[Auth] Rejecting unauthenticated request to ${req.path}`);
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  next();
+});
 
 // ==========================================
 // 2. REST API ENDPOINTS
 // ==========================================
+
+app.get('/api/me', async (req, res) => {
+  const is_superadmin = (req as any).is_superadmin;
+  const business_id = (req as any).business_id;
+
+  if (is_superadmin) {
+    return res.json({ role: 'admin' });
+  }
+
+  if (business_id) {
+    const { data: biz, error } = await supabaseAdmin.from('businesses').select('id, name').eq('id', business_id).single();
+    if (error) {
+      return res.status(500).json({ error: 'Failed to fetch business details' });
+    }
+    return res.json({ role: 'business', business: biz });
+  }
+
+  return res.status(403).json({ error: 'No valid role found' });
+});
+
+app.get('/api/admin/businesses', async (req, res) => {
+  const is_superadmin = (req as any).is_superadmin;
+  if (!is_superadmin) return res.status(403).json({ error: 'Forbidden' });
+
+  const { data, error } = await supabaseAdmin
+    .from('businesses')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.get('/api/admin/scripts/:businessId', async (req, res) => {
+  const is_superadmin = (req as any).is_superadmin;
+  if (!is_superadmin) return res.status(403).json({ error: 'Forbidden' });
+
+  const { data, error } = await supabaseAdmin
+    .from('business_facts')
+    .select('ai_prompt_instructions')
+    .eq('business_id', req.params.businessId)
+    .single();
+
+  if (error && error.code !== 'PGRST116') {
+    return res.status(500).json({ error: error.message });
+  }
+  
+  // Default structure if not found or invalid JSON
+  let scriptObj = {
+    core_greeting: ['Hallo, willkommen!'],
+    core_ai_disclosure: ['Ich bin Lisa, die KI-Assistentin. Ich notiere nur Ihr Anliegen und speichere keine Daten dauerhaft.'],
+    core_farewell: ['Auf Wiederhören, einen schönen Tag noch.'],
+    custom_nodes: []
+  };
+
+  if (data?.ai_prompt_instructions) {
+    try {
+      scriptObj = JSON.parse(data.ai_prompt_instructions);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  res.json(scriptObj);
+});
+
+app.post('/api/admin/scripts/:businessId', async (req, res) => {
+  const is_superadmin = (req as any).is_superadmin;
+  if (!is_superadmin) return res.status(403).json({ error: 'Forbidden' });
+
+  const scriptObj = req.body;
+  
+  // Upsert the new script to business_facts
+  const { error } = await supabaseAdmin
+    .from('business_facts')
+    .upsert({ 
+      business_id: req.params.businessId,
+      ai_prompt_instructions: JSON.stringify(scriptObj)
+    }, { onConflict: 'business_id' });
+
+  if (error) return res.status(500).json({ error: error.message });
+  
+  // Trigger TTS pregeneration in the background (we will implement this function next)
+  pregenerateCustomScriptAudio(scriptObj, DEFAULT_VOICE_ID).catch(e => console.error("Pregeneration error:", e));
+
+  res.json({ success: true });
+});
+
+app.get('/api/admin/global-scripts', async (req, res) => {
+  const is_superadmin = (req as any).is_superadmin;
+  if (!is_superadmin) return res.status(403).json({ error: 'Forbidden' });
+
+  const globalScriptsFile = path.join(process.cwd(), 'global_scripts.json');
+  let globalScripts: any = {
+    core_greeting: ['Hallo, willkommen bei {business_name}!'],
+    core_ai_disclosure: ['Ich bin Lisa, die KI-Assistentin. Ich notiere nur Ihr Anliegen und speichere keine Daten dauerhaft.'],
+    core_farewell: ['Auf Wiederhören, einen schönen Tag noch.'],
+    fillers: [
+      {
+        id: 'f1',
+        category: 'Terminsuche',
+        keywords: 'termin, tüv, tuv, werkstatt, probefahrt, inspektion',
+        texts: ['Ich schaue kurz nach freien Terminen um.', 'Einen Moment, ich prüfe unseren Kalender.']
+      }
+    ]
+  };
+
+  if (fs.existsSync(globalScriptsFile)) {
+    try {
+      globalScripts = JSON.parse(fs.readFileSync(globalScriptsFile, 'utf8'));
+    } catch (e) {
+      console.error('Failed to parse global scripts:', e);
+    }
+  }
+
+  res.json(globalScripts);
+});
+
+app.post('/api/admin/global-scripts', async (req, res) => {
+  const is_superadmin = (req as any).is_superadmin;
+  if (!is_superadmin) return res.status(403).json({ error: 'Forbidden' });
+
+  const globalScripts = req.body;
+  const globalScriptsFile = path.join(process.cwd(), 'global_scripts.json');
+  
+  fs.writeFileSync(globalScriptsFile, JSON.stringify(globalScripts, null, 2));
+
+  // Trigger TTS pregeneration for ALL businesses
+  try {
+    const { data: businesses } = await supabaseAdmin.from('businesses').select('id, name');
+    if (businesses) {
+      for (const biz of businesses) {
+        // Resolve placeholders
+        const resolvedScripts = {
+          core_greeting: globalScripts.core_greeting?.map((t: string) => t.replace(/{business_name}/g, biz.name)),
+          core_ai_disclosure: globalScripts.core_ai_disclosure?.map((t: string) => t.replace(/{business_name}/g, biz.name)),
+          core_farewell: globalScripts.core_farewell?.map((t: string) => t.replace(/{business_name}/g, biz.name)),
+        };
+        // Trigger generation
+        await pregenerateCustomScriptAudio(resolvedScripts, DEFAULT_VOICE_ID);
+      }
+    }
+  } catch (e) {
+    console.error("Failed to pregenerate global scripts:", e);
+  }
+
+  res.json({ success: true });
+});
 
 app.get('/api/metrics/latency', (req, res) => {
   res.json(metrics.getStats());
@@ -55,19 +286,25 @@ function normalizePhone(p: string): string {
 
 // Get Customers
 app.get('/api/customers', async (req, res) => {
-  const { data, error } = await supabase.from('customers').select('*').order('created_at', { ascending: false });
+  const business_id = (req as any).business_id;
+  if (!business_id) {
+    // If superadmin or no business_id is set, return empty list instead of throwing 500
+    return res.json([]);
+  }
+
+  const { data, error } = await supabaseAdmin.from('customers').select('*').eq('business_id', business_id).order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
 
   const customers = data.map(c => ({
     id: c.id,
     name: c.name,
     phone: c.phone,
-    vehicle: c.vehicle,
-    licensePlate: c.license_plate,
-    isKnownCustomer: c.is_known_customer,
-    lastVisitReason: c.last_visit_reason,
-    hasOwnCar: c.has_own_car,
-    rentsFromUs: c.rents_from_us,
+    vehicle: c.metadata?.vehicle || null,
+    licensePlate: c.metadata?.licensePlate || null,
+    isKnownCustomer: c.metadata?.isKnownCustomer ?? false,
+    lastVisitReason: c.metadata?.lastVisitReason || null,
+    hasOwnCar: c.metadata?.hasOwnCar ?? false,
+    rentsFromUs: c.metadata?.rentsFromUs ?? false,
     notes: c.notes,
     createdAt: c.created_at
   }));
@@ -77,12 +314,16 @@ app.get('/api/customers', async (req, res) => {
 // Lookup Customer by Phone
 app.get('/api/customers/lookup', async (req, res) => {
   const phone = req.query.phone as string;
+  const business_id = (req as any).business_id;
   if (!phone) {
     return res.status(400).json({ error: 'Phone parameter required' });
   }
+  if (!business_id) {
+    return res.json(null);
+  }
 
   const cleanPhone = normalizePhone(phone);
-  const { data, error } = await supabase.from('customers').select('*');
+  const { data, error } = await supabaseAdmin.from('customers').select('*').eq('business_id', business_id);
   if (error) return res.status(500).json({ error: error.message });
 
   const found = data.find(c => normalizePhone(c.phone) === cleanPhone);
@@ -94,12 +335,12 @@ app.get('/api/customers/lookup', async (req, res) => {
         id: found.id,
         name: found.name,
         phone: found.phone,
-        vehicle: found.vehicle,
-        licensePlate: found.license_plate,
-        isKnownCustomer: found.is_known_customer,
-        lastVisitReason: found.last_visit_reason,
-        hasOwnCar: found.has_own_car,
-        rentsFromUs: found.rents_from_us,
+        vehicle: found.metadata?.vehicle || null,
+        licensePlate: found.metadata?.licensePlate || null,
+        isKnownCustomer: found.metadata?.isKnownCustomer ?? false,
+        lastVisitReason: found.metadata?.lastVisitReason || null,
+        hasOwnCar: found.metadata?.hasOwnCar ?? false,
+        rentsFromUs: found.metadata?.rentsFromUs ?? false,
         notes: found.notes,
         createdAt: found.created_at
       }
@@ -112,20 +353,24 @@ app.get('/api/customers/lookup', async (req, res) => {
 // Add or Update Customer
 app.post('/api/customers', async (req, res) => {
   const data = req.body;
+  const business_id = (req as any).business_id;
   if (!data.name || !data.phone) {
     return res.status(400).json({ error: 'Name and phone required' });
   }
 
-  const { data: newCustData, error } = await supabase.from('customers').insert({
+  const { data: newCustData, error } = await supabaseAdmin.from('customers').insert({
+    business_id,
     name: data.name,
     phone: data.phone,
-    vehicle: data.vehicle || null,
-    license_plate: data.licensePlate || null,
-    is_known_customer: data.isKnownCustomer ?? true,
-    last_visit_reason: data.lastVisitReason || null,
-    has_own_car: data.hasOwnCar ?? true,
-    rents_from_us: data.rentsFromUs ?? false,
-    notes: data.notes || ''
+    notes: data.notes || '',
+    metadata: {
+      vehicle: data.vehicle || null,
+      licensePlate: data.licensePlate || null,
+      isKnownCustomer: data.isKnownCustomer ?? false,
+      lastVisitReason: data.lastVisitReason || null,
+      hasOwnCar: data.hasOwnCar ?? false,
+      rentsFromUs: data.rentsFromUs ?? false
+    }
   }).select().single();
 
   if (error) return res.status(500).json({ error: error.message });
@@ -134,47 +379,75 @@ app.post('/api/customers', async (req, res) => {
     id: newCustData.id,
     name: newCustData.name,
     phone: newCustData.phone,
-    vehicle: newCustData.vehicle,
-    licensePlate: newCustData.license_plate,
-    isKnownCustomer: newCustData.is_known_customer,
-    lastVisitReason: newCustData.last_visit_reason,
-    hasOwnCar: newCustData.has_own_car,
-    rentsFromUs: newCustData.rents_from_us,
+    vehicle: newCustData.metadata?.vehicle || null,
+    licensePlate: newCustData.metadata?.licensePlate || null,
+    isKnownCustomer: newCustData.metadata?.isKnownCustomer ?? false,
+    lastVisitReason: newCustData.metadata?.lastVisitReason || null,
+    hasOwnCar: newCustData.metadata?.hasOwnCar ?? false,
+    rentsFromUs: newCustData.metadata?.rentsFromUs ?? false,
     notes: newCustData.notes,
     createdAt: newCustData.created_at
   });
 });
 
-// Get All Leads
-app.get('/api/leads', async (req, res) => {
-  const { data, error } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
+// Update Customer
+app.put('/api/customers/:id', async (req, res) => {
+  const { id } = req.params;
+  const data = req.body;
+  const business_id = (req as any).business_id;
+
+  if (!id) return res.status(400).json({ error: 'Customer ID required' });
+
+  const { data: updatedCust, error } = await supabaseAdmin.from('customers').update({
+    name: data.name,
+    phone: data.phone,
+    notes: data.notes || '',
+    metadata: {
+      vehicle: data.vehicle || null,
+      licensePlate: data.licensePlate || null,
+      isKnownCustomer: data.isKnownCustomer ?? false,
+      lastVisitReason: data.lastVisitReason || null,
+      hasOwnCar: data.hasOwnCar ?? false,
+      rentsFromUs: data.rentsFromUs ?? false
+    }
+  }).eq('id', id).eq('business_id', business_id).select().single();
+
   if (error) return res.status(500).json({ error: error.message });
 
-  const leads = data.map(l => ({
-    id: l.id,
-    callerName: l.caller_name,
-    phoneNumber: l.phone_number,
-    category: l.category,
-    concern: l.concern,
-    urgency: l.urgency,
-    vehicleInfo: l.vehicle_info,
-    preferredCallbackTime: l.preferred_callback_time,
-    status: l.status,
-    notes: l.notes,
-    transcript: l.transcript,
-    createdAt: l.created_at,
-    updatedAt: l.updated_at,
-    assignedStaff: l.assigned_staff
-  }));
-  res.json(leads);
+  res.json({
+    id: updatedCust.id,
+    name: updatedCust.name,
+    phone: updatedCust.phone,
+    vehicle: updatedCust.metadata?.vehicle || null,
+    licensePlate: updatedCust.metadata?.licensePlate || null,
+    isKnownCustomer: updatedCust.metadata?.isKnownCustomer ?? false,
+    lastVisitReason: updatedCust.metadata?.lastVisitReason || null,
+    hasOwnCar: updatedCust.metadata?.hasOwnCar ?? false,
+    rentsFromUs: updatedCust.metadata?.rentsFromUs ?? false,
+    notes: updatedCust.notes,
+    createdAt: updatedCust.created_at
+  });
+});
+
+// Get Leads
+app.get('/api/leads', async (req, res) => {
+  const business_id = (req as any).business_id;
+  if (!business_id) {
+    return res.json([]);
+  }
+
+  const { data, error } = await supabaseAdmin.from('leads').select('*').eq('business_id', business_id).order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
 // Save Lead endpoint
 app.post('/api/leads', async (req, res) => {
+  const business_id = (req as any).business_id;
   const data = req.body;
 
   const newLead = {
-    id: 'lead-' + Date.now().toString(36),
+    business_id,
     caller_name: data.callerName || 'Unbekannt',
     phone_number: data.phoneNumber || '',
     category: data.category || 'general',
@@ -188,7 +461,7 @@ app.post('/api/leads', async (req, res) => {
     assigned_staff: data.category === 'workshop' ? 'Werkstatt-Team' : data.category === 'sales' || data.category === 'test_drive' ? 'Verkaufsteam' : 'Empfang'
   };
 
-  const { data: inserted, error } = await supabase.from('leads').insert(newLead).select().single();
+  const { data: inserted, error } = await supabaseAdmin.from('leads').insert(newLead).select().single();
   if (error) return res.status(500).json({ error: error.message });
 
   res.status(201).json({ success: true, lead: { ...inserted, callerName: inserted.caller_name, phoneNumber: inserted.phone_number } });
@@ -196,6 +469,7 @@ app.post('/api/leads', async (req, res) => {
 
 // Update Lead Status / Urgency / Notes
 app.patch('/api/leads/:id', async (req, res) => {
+  const business_id = (req as any).business_id;
   const { id } = req.params;
 
   const updates: any = {};
@@ -204,7 +478,7 @@ app.patch('/api/leads/:id', async (req, res) => {
   if (req.body.assignedStaff) updates.assigned_staff = req.body.assignedStaff;
   updates.updated_at = new Date().toISOString();
 
-  const { data, error } = await supabase.from('leads').update(updates).eq('id', id).select().single();
+  const { data, error } = await supabaseAdmin.from('leads').update(updates).eq('id', id).eq('business_id', business_id).select().single();
   if (error) return res.status(500).json({ error: error.message });
 
   res.json(data);
@@ -212,64 +486,106 @@ app.patch('/api/leads/:id', async (req, res) => {
 
 // Delete Lead
 app.delete('/api/leads/:id', async (req, res) => {
+  const business_id = (req as any).business_id;
   const { id } = req.params;
-  const { error } = await supabase.from('leads').delete().eq('id', id);
+  const { error } = await supabaseAdmin.from('leads').delete().eq('id', id).eq('business_id', business_id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true });
 });
 
 // Business Facts GET & POST
 app.get('/api/business-facts', async (req, res) => {
-  const { data, error } = await supabase.from('business_facts').select('*').eq('id', 1).single();
+  const business_id = (req as any).business_id;
+  const { data, error } = await supabaseAdmin.from('business_facts').select('*').eq('business_id', business_id).single();
   if (error || !data) {
     return res.json({
-      dealershipName: 'Autohaus Kaiserslautern',
-      address: 'Pariser Str. 120, 67655 Kaiserslautern',
-      phone: '0631 1234560',
-      email: 'info@autohaus-kaiserslautern.de',
+      businessName: 'Beispielunternehmen',
+      address: 'Musterstraße 1, 12345 Musterstadt',
+      phone: '0123 456789',
+      email: 'info@beispielunternehmen.de',
       openingHours: {
         weekdays: 'Montag bis Freitag: 08:00 - 18:00 Uhr',
         saturday: 'Samstag: 09:00 - 14:00 Uhr',
-        sunday: 'Sonntag: Geschlossen (Schauseite geöffnet)'
+        sunday: 'Sonntag: Geschlossen'
       },
-      workshopHours: 'Montag bis Freitag: 07:30 - 17:00 Uhr',
-      rentalRates: 'Mietwagen ab 39€ / Tag inklusive 100km. Vollkasko verfügbar.',
-      emergencyNumber: '24/7 Pannennotdienst: 0800 555 4433',
-      specialOffers: 'Sommer-Check inklusive Klima-Wartung für 49€ Angebot diesen Monat!',
-      guardrailsPrompt: 'Sei stets freundlich, professionell und hilfsbereit. Gib keine medizinischen oder juristischen Ratschläge. Beschränke deine Antworten auf Themen des Autohauses Kaiserslautern.'
+      secondaryHours: '',
+      pricing: '',
+      emergencyNumber: '',
+      specialOffers: '',
+      guardrailsPrompt: 'Sei stets freundlich, professionell und hilfsbereit. Gib keine medizinischen oder juristischen Ratschläge.',
+      products: '',
+      services: '',
+      teamMembers: '',
+      appointmentRules: '',
+      knowledgeBase: '',
+      permissions: {
+        mentionPrices: false,
+        mentionEmployees: true,
+        bookAppointments: true,
+        technicalAdvice: false
+      }
     });
   }
 
+  let actualGuardrails = data.metadata?.guardrailsPrompt || '';
+  let perms = { mentionPrices: false, mentionEmployees: true, bookAppointments: true, technicalAdvice: false };
+  
+  if (actualGuardrails.includes('|||PERMISSIONS|||')) {
+    const parts = actualGuardrails.split('|||PERMISSIONS|||');
+    actualGuardrails = parts[0];
+    try {
+      perms = JSON.parse(parts[1]);
+    } catch (e) {}
+  }
+
   res.json({
-    dealershipName: data.dealership_name,
-    address: data.address,
-    phone: data.phone,
-    email: data.email,
-    openingHours: data.opening_hours,
-    workshopHours: data.workshop_hours,
-    rentalRates: data.rental_rates,
-    emergencyNumber: data.emergency_number,
-    specialOffers: data.special_offers,
-    guardrailsPrompt: data.guardrails_prompt
+    businessName: data.metadata?.businessName || '',
+    address: data.metadata?.address || '',
+    phone: data.metadata?.phone || '',
+    email: data.metadata?.email || '',
+    openingHours: data.metadata?.openingHours || '',
+    secondaryHours: data.metadata?.secondaryHours || '',
+    pricing: data.metadata?.pricing || '',
+    emergencyNumber: data.metadata?.emergencyNumber || '',
+    specialOffers: data.metadata?.specialOffers || '',
+    guardrailsPrompt: actualGuardrails,
+    products: data.metadata?.products || '',
+    services: data.metadata?.services || '',
+    teamMembers: data.metadata?.teamMembers || '',
+    appointmentRules: data.metadata?.appointmentRules || '',
+    knowledgeBase: data.metadata?.knowledgeBase || '',
+    permissions: perms
   });
 });
 
 app.post('/api/business-facts', async (req, res) => {
-  const payload = {
-    id: 1,
-    dealership_name: req.body.dealershipName,
+  const business_id = (req as any).business_id;
+  
+  // Package everything into the metadata object
+  const metadata = {
+    businessName: req.body.businessName,
     address: req.body.address,
     phone: req.body.phone,
     email: req.body.email,
-    opening_hours: req.body.openingHours,
-    workshop_hours: req.body.workshopHours,
-    rental_rates: req.body.rentalRates,
-    emergency_number: req.body.emergencyNumber,
-    special_offers: req.body.specialOffers,
-    guardrails_prompt: req.body.guardrailsPrompt
+    openingHours: req.body.openingHours,
+    secondaryHours: req.body.secondaryHours,
+    pricing: req.body.pricing,
+    emergencyNumber: req.body.emergencyNumber,
+    specialOffers: req.body.specialOffers,
+    guardrailsPrompt: req.body.guardrailsPrompt + '|||PERMISSIONS|||' + JSON.stringify(req.body.permissions || {}),
+    products: req.body.products,
+    services: req.body.services,
+    teamMembers: req.body.teamMembers,
+    appointmentRules: req.body.appointmentRules,
+    knowledgeBase: req.body.knowledgeBase
   };
 
-  const { data, error } = await supabase.from('business_facts').upsert(payload).select().single();
+  const payload = {
+    business_id: business_id,
+    metadata: metadata
+  };
+
+  const { data, error } = await supabaseAdmin.from('business_facts').upsert(payload, { onConflict: 'business_id' }).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(req.body);
 });
@@ -302,6 +618,64 @@ if (!fs.existsSync(AUDIO_CACHE_DIR)) {
   fs.mkdirSync(AUDIO_CACHE_DIR, { recursive: true });
 }
 
+async function pregenerateCustomScriptAudio(scriptObj: any, voiceId: string) {
+  console.log(`Pre-generating custom script audio for voice: ${voiceId}`);
+  
+  // Extract all text strings from the scriptObj
+  const textsToGenerate: { tag: string, text: string }[] = [];
+  
+  if (scriptObj.core_greeting) scriptObj.core_greeting.forEach((t: string, i: number) => textsToGenerate.push({ tag: `greeting_${i}`, text: t }));
+  if (scriptObj.core_ai_disclosure) scriptObj.core_ai_disclosure.forEach((t: string, i: number) => textsToGenerate.push({ tag: `disclosure_${i}`, text: t }));
+  if (scriptObj.core_farewell) scriptObj.core_farewell.forEach((t: string, i: number) => textsToGenerate.push({ tag: `farewell_${i}`, text: t }));
+  
+  if (scriptObj.custom_nodes && Array.isArray(scriptObj.custom_nodes)) {
+    scriptObj.custom_nodes.forEach((node: any, nIdx: number) => {
+      if (node.texts && Array.isArray(node.texts)) {
+        node.texts.forEach((t: string, tIdx: number) => {
+          textsToGenerate.push({ tag: `custom_${nIdx}_${tIdx}`, text: t });
+        });
+      }
+    });
+  }
+
+  for (const item of textsToGenerate) {
+    const text = item.text.trim();
+    if (!text) continue;
+    
+    const cacheKey = `${text}-${voiceId}`;
+    if (!ttsCache.has(cacheKey)) {
+      const safeTag = item.tag.replace(/[^a-zA-Z0-9_]/g, '');
+      const filePath = path.join(AUDIO_CACHE_DIR, `dyn_${safeTag}_${voiceId}.mp3`);
+
+      if (fs.existsSync(filePath)) {
+        const audioBuffer = fs.readFileSync(filePath);
+        ttsCache.set(cacheKey, audioBuffer);
+      } else {
+        if (!ttsClient) continue;
+        try {
+          console.log(`Generating TTS for dynamic text: "${text.substring(0, 20)}..."`);
+          const request = {
+            input: { text: text + ' ...' },
+            voice: { languageCode: 'de-DE', name: voiceId },
+            audioConfig: { 
+              audioEncoding: 'MP3' as const, 
+              ...(voiceId.includes('Journey') ? {} : { speakingRate: 1.10 })
+            }
+          };
+          const [response] = await ttsClient.synthesizeSpeech(request);
+          if (response.audioContent) {
+            const audioBuffer = Buffer.from(response.audioContent as Uint8Array);
+            fs.writeFileSync(filePath, audioBuffer);
+            ttsCache.set(cacheKey, audioBuffer);
+          }
+        } catch (e) {
+          console.error(`Failed to pre-generate audio for "${text}":`, e);
+        }
+      }
+    }
+  }
+}
+
 async function pregenerateScriptAudio(voiceId: string) {
   console.log(`Pre-generating script audio for voice: ${voiceId}`);
   for (const [tag, text] of Object.entries(scriptedResponses)) {
@@ -322,7 +696,7 @@ async function pregenerateScriptAudio(voiceId: string) {
         try {
           console.log(`Generating TTS for ${tag} and saving to disk.`);
           const request = {
-            input: { text: text + ' ...' },
+            input: { text: text },
             voice: { languageCode: 'de-DE', name: voiceId },
             audioConfig: { 
               audioEncoding: 'MP3' as const, 
@@ -394,7 +768,7 @@ app.post('/api/voice/tts', async (req, res) => {
     if (!ttsClient) throw new Error("Google TTS Client not initialized.");
 
     const request = {
-      input: { text: text + ' ...' },
+      input: { text: text },
       voice: { languageCode: 'de-DE', name: targetVoiceId },
       audioConfig: {
         audioEncoding: 'MP3' as const,
@@ -423,6 +797,135 @@ app.post('/api/voice/tts', async (req, res) => {
   }
 });
 
+// Get Businesses for HQ
+app.get('/api/businesses', async (req, res) => {
+  if (!(req as any).is_superadmin) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  // Join businesses with business_facts
+  const { data: businesses, error: bErr } = await supabaseAdmin.from('businesses').select('*');
+  const { data: facts, error: fErr } = await supabaseAdmin.from('business_facts').select('business_id, ai_prompt_instructions');
+
+  if (bErr || fErr) {
+    console.error("DB Error:", bErr || fErr);
+    return res.status(500).json({ error: 'DB Error' });
+  }
+
+  const result = businesses.map(b => {
+    const fact = facts.find(f => f.business_id === b.id);
+    let scripts = {};
+    if (fact && fact.ai_prompt_instructions) {
+      try {
+        scripts = JSON.parse(fact.ai_prompt_instructions);
+      } catch (e) {
+        // Not a JSON object, ignore
+      }
+    }
+    return {
+      id: b.id,
+      dealership_name: b.name,
+      twilio_phone_number: b.twilio_phone_number,
+      scripts
+    };
+  });
+  res.json(result);
+});
+
+// Save Scripts
+app.put('/api/businesses/:id/scripts', async (req, res) => {
+  if (!(req as any).is_superadmin) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const { id } = req.params;
+  const { scripts } = req.body;
+  
+  // Save as JSON string in ai_prompt_instructions for now (or a new column)
+  const { error } = await supabaseAdmin.from('business_facts')
+    .update({ ai_prompt_instructions: JSON.stringify(scripts) })
+    .eq('business_id', id);
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// Generate Audio
+app.post('/api/scripts/generate-audio', async (req, res) => {
+  // Stub for audio generation
+  console.log("Audio generation triggered for:", req.body.twilioPhoneNumber);
+  res.json({ success: true });
+});
+
+// Magic Fill: Scrape Website
+app.post('/api/scrape-business', async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL is required' });
+
+    // 1. Fetch website HTML
+    const fetchRes = await fetch(url);
+    const html = await fetchRes.text();
+
+    // 2. Extract raw text using cheerio
+    const $ = cheerio.load(html);
+    // Remove scripts, styles, etc.
+    $('script, style, noscript').remove();
+    const rawText = $('body').text().replace(/\s+/g, ' ').substring(0, 30000); // Limit length to avoid huge token costs
+
+    // 3. Ask Gemini to extract structured JSON
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error('GEMINI_API_KEY environment variable is not configured.');
+    
+    const ai = new GoogleGenAI({ apiKey, httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } });
+    
+    const prompt = `Du bist ein intelligenter Daten-Extraktor. Analysiere den folgenden Text von der Unternehmens-Webseite und extrahiere die relevanten Informationen für ein CRM/KI-System.
+Gib das Ergebnis **ausschließlich** als gültiges JSON-Objekt zurück. Verwende dieses exakte Schema:
+{
+  "dealershipName": "Name des Unternehmens",
+  "address": "Vollständige Adresse (falls gefunden)",
+  "phone": "Zentrale Telefonnummer (falls gefunden)",
+  "email": "Allgemeine E-Mail (falls gefunden)",
+  "emergencyNumber": "Notdienst/Pannenhotline (falls gefunden)",
+  "brands": "Marken oder Produkte, die verkauft/vertreten werden (kommagetrennt)",
+  "services": "Dienstleistungen, die angeboten werden (kommagetrennt)",
+  "rentalRates": "Preise, Preislisten oder Tarif-Konditionen für Dienstleistungen/Produkte (als lesbarer Freitext)",
+  "specialOffers": "Aktuelle Rabatte, Aktionen oder Sonderangebote (als Freitext)",
+  "openingHours": [
+     {"day": "Montag", "open": "08:00", "close": "18:00", "closed": false},
+     ...
+  ],
+  "workshopHours": [
+     ...gleiches Format wie openingHours, falls separate Werkstattzeiten vorhanden...
+  ]
+}
+Wenn eine Information nicht im Text gefunden wird, lasse den String leer oder gib ein leeres Array zurück.
+
+Webseiten-Text:
+"""
+${rawText}
+"""
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: "application/json"
+      }
+    });
+
+    const jsonText = response.text;
+    if (!jsonText) throw new Error("No response from AI");
+    
+    const parsedData = JSON.parse(jsonText);
+    res.json({ success: true, data: parsedData });
+  } catch (error: any) {
+    console.error("Scraping error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ==========================================
 // 3. GEMINI AI CONVERSATIONAL VOICE ENGINE
 // ==========================================
@@ -430,37 +933,81 @@ app.post('/api/voice/tts', async (req, res) => {
 const getAiClient = () => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY environment variable is not configured.');
-  return new GeminiService(apiKey, supabase);
+  return new GeminiService(apiKey, supabaseAdmin);
 };
 
 app.post('/api/voice/interact', async (req, res) => {
   try {
     const { phoneNumber, userMessage, history, isFirstGreeting, hasSavedLead } = req.body;
 
+    const business_id = (req as any).business_id;
     // 1. Fetch Business Facts
     let businessFacts: any = { dealershipName: 'Autohaus Kaiserslautern' };
     const t0 = performance.now();
-    const { data: bf } = await supabase.from('business_facts').select('*').eq('id', 1).single();
-    if (bf) {
+    const { data: bf } = await supabaseAdmin.from('business_facts').select('*').eq('business_id', business_id).single();
+    const { data: biz } = await supabaseAdmin.from('businesses').select('name').eq('id', business_id).single();
+    
+    if (bf || biz) {
+      let actualGuardrails = bf?.metadata?.guardrailsPrompt || '';
+      let permissions = { mentionPrices: false, mentionEmployees: true, bookAppointments: true, technicalAdvice: false };
+      
+      if (actualGuardrails.includes('|||PERMISSIONS|||')) {
+        const parts = actualGuardrails.split('|||PERMISSIONS|||');
+        actualGuardrails = parts[0];
+        try { permissions = JSON.parse(parts[1]); } catch (e) {}
+      }
+
       businessFacts = {
-        dealershipName: bf.dealership_name,
-        address: bf.address,
-        phone: bf.phone,
-        openingHours: bf.opening_hours,
-        workshopHours: bf.workshop_hours,
-        rentalRates: bf.rental_rates,
-        emergencyNumber: bf.emergency_number,
-        specialOffers: bf.special_offers,
-        guardrailsPrompt: bf.guardrails_prompt
+        businessName: bf?.metadata?.businessName || biz?.name,
+        address: bf?.metadata?.address,
+        phone: bf?.metadata?.phone,
+        openingHours: bf?.metadata?.openingHours,
+        secondaryHours: bf?.metadata?.secondaryHours,
+        pricing: bf?.metadata?.pricing,
+        emergencyNumber: bf?.metadata?.emergencyNumber,
+        specialOffers: bf?.metadata?.specialOffers,
+        products: bf?.metadata?.products,
+        services: bf?.metadata?.services,
+        teamMembers: bf?.metadata?.teamMembers,
+        appointmentRules: bf?.metadata?.appointmentRules,
+        knowledgeBase: bf?.metadata?.knowledgeBase,
+        guardrailsPrompt: actualGuardrails,
+        permissions
+      };
+      
+      let customScripts = { custom_nodes: [] };
+      try {
+        if (bf?.ai_prompt_instructions) {
+          customScripts = JSON.parse(bf.ai_prompt_instructions);
+        }
+      } catch (e) {}
+
+      let globalScripts: any = {};
+      try {
+        const p = path.join(process.cwd(), 'global_scripts.json');
+        if (fs.existsSync(p)) {
+          globalScripts = JSON.parse(fs.readFileSync(p, 'utf8'));
+        }
+      } catch(e) {}
+
+      // Resolve {business_name} placeholders in global scripts
+      const name = biz?.name || 'unserem Unternehmen';
+      businessFacts.scriptObj = {
+        core_greeting: (globalScripts.core_greeting || []).map((t: string) => t.replace(/{business_name}/g, name)),
+        core_ai_disclosure: (globalScripts.core_ai_disclosure || []).map((t: string) => t.replace(/{business_name}/g, name)),
+        core_farewell: (globalScripts.core_farewell || []).map((t: string) => t.replace(/{business_name}/g, name)),
+        fillers: globalScripts.fillers || [],
+        custom_nodes: customScripts.custom_nodes || []
       };
     } else {
       businessFacts.guardrailsPrompt = "Sei stets freundlich, professionell und hilfsbereit.";
       businessFacts.openingHours = { weekdays: '08:00 - 18:00', saturday: '09:00 - 14:00', sunday: 'Geschlossen' };
+      businessFacts.scriptObj = { core_greeting: [], core_ai_disclosure: [], core_farewell: [], custom_nodes: [] };
     }
 
     // 2. Lookup Customer
     const cleanPhone = normalizePhone(phoneNumber || '');
-    const { data: allCusts } = await supabase.from('customers').select('*');
+    const { data: allCusts } = await supabaseAdmin.from('customers').select('*').eq('business_id', business_id);
     metrics.record('db', performance.now() - t0);
     const matchedCustomer = allCusts?.find(c => normalizePhone(c.phone) === cleanPhone);
 
@@ -472,7 +1019,8 @@ app.post('/api/voice/interact', async (req, res) => {
       isFirstGreeting,
       hasSavedLead,
       businessFacts,
-      matchedCustomer
+      matchedCustomer,
+      (req as any).business_id
     );
 
     res.json(result);
@@ -488,6 +1036,7 @@ app.post('/api/voice/interact', async (req, res) => {
 
 // In-memory stores
 const twilioCallSessions = new Map<string, any[]>();
+const twilioCallStates = new Map<string, { hasSavedLead: boolean }>();
 const twilioAudioCache = new Map<string, Buffer>();
 
 // Initialize Twilio Client for Outbound calls
@@ -527,8 +1076,35 @@ app.post('/api/twilio/call', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+const validateTwilioRequest = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  // Allow bypassing in dev if specifically needed, but default to validating
+  if (process.env.NODE_ENV !== 'production' && process.env.BYPASS_TWILIO_SIG === 'true') {
+    return next();
+  }
 
-app.post('/api/twilio/incoming', async (req, res) => {
+  const twilioSignature = req.headers['x-twilio-signature'] as string;
+  const authToken = process.env.TWILIO_AUTH_TOKEN || '';
+  
+  if (!twilioSignature || !authToken) {
+    return res.status(403).send('Forbidden: Missing Twilio Signature or Auth Token');
+  }
+
+  // Twilio signs the full URL it requested.
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  const url = `${protocol}://${host}${req.originalUrl}`;
+  
+  const isValid = twilio.validateRequest(authToken, twilioSignature, url, req.body);
+  
+  if (isValid) {
+    next();
+  } else {
+    console.error('Twilio Signature Validation Failed for URL:', url);
+    res.status(403).send('Forbidden: Invalid Twilio Signature');
+  }
+};
+
+app.post('/api/twilio/incoming', validateTwilioRequest, async (req, res) => {
   try {
     const callSid = req.body.CallSid;
     const fromPhone = req.body.From;
@@ -562,6 +1138,7 @@ app.post('/api/twilio/incoming', async (req, res) => {
     twilioCallSessions.set(callSid, [
       { sender: 'assistant', text: greetingText, timestamp: new Date().toISOString() }
     ]);
+    twilioCallStates.set(callSid, { hasSavedLead: false });
 
     const twiml = new VoiceResponse();
     // Play greeting
@@ -586,7 +1163,7 @@ app.post('/api/twilio/incoming', async (req, res) => {
   }
 });
 
-app.post('/api/twilio/respond', async (req, res) => {
+app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
   try {
     const callSid = req.body.CallSid;
     const fromPhone = req.body.From;
@@ -626,6 +1203,8 @@ app.post('/api/twilio/respond', async (req, res) => {
       try {
         history.push({ sender: 'customer', text: userSpeech, timestamp: new Date().toISOString() });
 
+        const callState = twilioCallStates.get(callSid) || { hasSavedLead: false };
+
         // Send to Gemini
         const interactRes = await fetch(`http://localhost:${PORT}/api/voice/interact`, {
           method: 'POST',
@@ -633,12 +1212,18 @@ app.post('/api/twilio/respond', async (req, res) => {
           body: JSON.stringify({
             phoneNumber: fromPhone,
             userMessage: userSpeech,
-            history: history
+            history: history,
+            hasSavedLead: callState.hasSavedLead
           })
         });
 
         const interactData = await interactRes.json();
         const assistantText = interactData.text || "Ich habe Sie leider nicht verstanden.";
+        
+        if (interactData.savedLeadData) {
+          callState.hasSavedLead = true;
+          twilioCallStates.set(callSid, callState);
+        }
 
         history.push({ sender: 'assistant', text: assistantText, timestamp: new Date().toISOString() });
         twilioCallSessions.set(callSid, history);

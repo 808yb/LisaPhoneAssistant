@@ -1,0 +1,55 @@
+{
+  "core_greeting": [
+    "Hallo, willkommen bei {business_name}!"
+  ],
+  "core_ai_disclosure": [
+    "Ich bin Lisa, die KI-Assistentin. Ich notiere nur Ihr Anliegen und speichere keine Daten dauerhaft. Wie kann ich Ihnen helfen?"
+  ],
+  "core_farewell": [
+    "Auf Wiederhören, einen schönen Tag noch."
+  ],
+  "fillers": [
+    {
+      "id": "f-1",
+      "category": "Terminsuche",
+      "keywords": "termin, kalender, werkstatt, inspektion, tüv, tuv, radwechsel",
+      "texts": [
+        "Ich schaue kurz im Kalender nach einem freien Platz.",
+        "Einen Moment bitte, ich suche nach einem passenden Termin für Sie.",
+        "Lassen Sie mich kurz nachschauen, wann wir etwas frei haben."
+      ]
+    },
+    {
+      "id": "f-2",
+      "category": "Rückruf anfordern",
+      "keywords": "rückruf, zurückrufen, sprechen, meister, chef, verkäufer",
+      "texts": [
+        "Ich notiere das sofort für einen Rückruf.",
+        "Kein Problem, ich vermerke, dass Sie zurückgerufen werden möchten.",
+        "Ich richte das gerne aus, damit sich jemand bei Ihnen meldet."
+      ]
+    },
+    {
+      "id": "f-3",
+      "category": "Statusabfrage",
+      "keywords": "status, fertig, abholen, reparatur, auto, wagen",
+      "texts": [
+        "Ich schaue kurz im System nach, wie der aktuelle Stand ist.",
+        "Einen kleinen Augenblick, ich rufe die Daten zu Ihrem Fahrzeug auf.",
+        "Lassen Sie mich kurz nachsehen, ob Ihr Auto schon fertig ist."
+      ]
+    },
+    {
+      "id": "f-4",
+      "category": "Allgemeines Warten",
+      "keywords": "*",
+      "texts": [
+        "Einen Moment bitte, ich verarbeite Ihre Anfrage.",
+        "Ich schau mal nach.",
+        "Geben Sie mir bitte eine Sekunde, ich schreibe das mit.",
+        "Einen Moment bitte.",
+        "Ja, eine Sekunde."
+      ]
+    }
+  ]
+}

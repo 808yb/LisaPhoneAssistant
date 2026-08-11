@@ -238,6 +238,9 @@ export const LandingPage: React.FC = () => {
                     id="landingPhoneInput"
                     placeholder="151 1234567" 
                     className="flex-1 bg-transparent border-none px-4 py-3 text-sm focus:outline-none"
+                    onInput={(e) => {
+                      e.currentTarget.value = e.currentTarget.value.replace(/[^0-9]/g, '');
+                    }}
                   />
                 </div>
                 
