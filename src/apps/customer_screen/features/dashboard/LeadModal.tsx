@@ -23,12 +23,25 @@ export const LeadModal: React.FC<LeadModalProps> = ({ lead, onClose, onUpdateLea
             <p className="text-xs font-mono text-slate-500">{lead.phoneNumber}</p>
           </div>
 
-          <button
-            onClick={onClose}
-            className="text-slate-600 hover:text-slate-900 text-xs font-medium bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg border border-slate-200 transition-colors"
-          >
-            Schließen
-          </button>
+          <div className="flex items-center space-x-2">
+            {lead.status !== 'completed' && (
+              <button
+                onClick={() => {
+                  onUpdateLead(lead.id, { status: 'completed' });
+                  onClose();
+                }}
+                className="text-emerald-700 hover:text-white text-xs font-medium bg-emerald-50 hover:bg-emerald-500 px-3 py-1.5 rounded-lg border border-emerald-200 transition-colors"
+              >
+                ✓ Als erledigt markieren
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="text-slate-600 hover:text-slate-900 text-xs font-medium bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg border border-slate-200 transition-colors"
+            >
+              Schließen
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
@@ -41,8 +54,10 @@ export const LeadModal: React.FC<LeadModalProps> = ({ lead, onClose, onUpdateLea
           </div>
 
           <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1">
-            <span className="text-slate-500 font-bold uppercase tracking-wider text-[10px] block">Fahrzeug & Wunschzeit</span>
-            <p className="text-slate-700 font-medium">Fahrzeug: {lead.vehicleInfo || 'Keine Angabe'}</p>
+            <span className="text-slate-500 font-bold uppercase tracking-wider text-[10px] block">Details & Wunschzeit</span>
+            {lead.additionalInfo && lead.additionalInfo !== 'Keines' && lead.additionalInfo !== 'Keine Angabe' && (
+              <p className="text-slate-700 font-medium">Notiz: {lead.additionalInfo}</p>
+            )}
             <p className="text-amber-600 font-medium">Rückruf: {lead.preferredCallbackTime || 'Schnellstmöglich'}</p>
           </div>
         </div>

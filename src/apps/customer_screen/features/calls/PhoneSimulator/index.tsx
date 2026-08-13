@@ -187,7 +187,7 @@ export const PhoneSimulator: React.FC<PhoneSimulatorProps> = ({
 
         {/* Right Column: Phone Screen Simulator */}
         <div className="lg:col-span-7 space-y-4">
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden flex flex-col h-[600px]">
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden flex flex-col h-[600px] min-h-[400px] resize-y">
 
             {/* Phone Screen Header */}
             <div className="bg-slate-50 p-4 border-b border-slate-200 flex items-center justify-between">

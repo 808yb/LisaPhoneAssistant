@@ -20,14 +20,16 @@ export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
   const [activeCustomerDetail, setActiveCustomerDetail] = useState<Customer | null>(null);
   const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
   const [editNotes, setEditNotes] = useState('');
-  const [editVehicle, setEditVehicle] = useState('');
+  const [editAdditionalInfo, setEditAdditionalInfo] = useState('');
 
   // New Customer Form State
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
-  const [newVehicle, setNewVehicle] = useState('');
-  const [newLicensePlate, setNewLicensePlate] = useState('');
+  const [newAdditionalInfo, setNewAdditionalInfo] = useState('');
+  const [newReferenceId, setNewReferenceId] = useState('');
   const [newNotes, setNewNotes] = useState('');
   const [newIsKnown, setNewIsKnown] = useState(true);
   const [newRentsFromUs, setNewRentsFromUs] = useState(false);
@@ -35,16 +37,16 @@ export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
   const filteredCustomers = customers.filter(cust => {
     if (filterType === 'known' && !cust.isKnownCustomer) return false;
     if (filterType === 'rental' && !cust.rentsFromUs) return false;
-    if (filterType === 'has_car' && !cust.hasOwnCar) return false;
+    if (filterType === 'has_car' && !cust.hasResource) return false;
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchName = cust.name.toLowerCase().includes(q);
       const matchPhone = cust.phone.includes(q);
-      const matchVehicle = cust.vehicle?.toLowerCase().includes(q);
-      const matchPlate = cust.licensePlate?.toLowerCase().includes(q);
+      const matchAdditionalInfo = cust.additionalInfo?.toLowerCase().includes(q);
+      const matchPlate = cust.referenceId?.toLowerCase().includes(q);
       const matchNotes = cust.notes?.toLowerCase().includes(q);
-      if (!matchName && !matchPhone && !matchVehicle && !matchPlate && !matchNotes) return false;
+      if (!matchName && !matchPhone && !matchAdditionalInfo && !matchPlate && !matchNotes) return false;
     }
     return true;
   });
@@ -56,18 +58,18 @@ export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
     onAddCustomer({
       name: newName.trim(),
       phone: newPhone.trim(),
-      vehicle: newVehicle.trim() || null,
-      licensePlate: newLicensePlate.trim() || null,
+      additionalInfo: newAdditionalInfo.trim() || null,
+      referenceId: newReferenceId.trim() || null,
       isKnownCustomer: newIsKnown,
       rentsFromUs: newRentsFromUs,
-      hasOwnCar: !!newVehicle.trim(),
+      hasResource: !!newAdditionalInfo.trim(),
       notes: newNotes.trim() || null
     });
 
     setNewName('');
     setNewPhone('');
-    setNewVehicle('');
-    setNewLicensePlate('');
+    setNewAdditionalInfo('');
+    setNewReferenceId('');
     setNewNotes('');
     setShowAddModal(false);
   };
@@ -80,10 +82,10 @@ export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
         <div>
           <div className="flex items-center space-x-2">
             <Users className="w-5 h-5 text-blue-600" />
-            <h2 className="text-base font-semibold text-slate-900 tracking-wide">Kundenkartei (Kaiserslautern)</h2>
+            <h2 className="text-base font-semibold text-slate-900 tracking-wide">Kundenkartei</h2>
           </div>
           <p className="text-xs text-slate-600 mt-0.5">
-            Zentrale Kundendatenbank. Bei eingehenden Anrufen gleicht die KI die Telefonnummer in Echtzeit ab und lädt Fahrzeug- & Historien-Kontext.
+            Zentrale Kundendatenbank. Bei eingehenden Anrufen gleicht die KI die Telefonnummer in Echtzeit ab und lädt Details & Historien-Kontext.
           </p>
         </div>
 
@@ -107,7 +109,7 @@ export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Name, Telefon, Fahrzeug, Kennzeichen..."
+              placeholder="Name, Telefon, Zusatzinfos, ID..."
               className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-800 placeholder-slate-600 focus:outline-none focus:border-slate-300"
             />
           </div>
@@ -120,7 +122,7 @@ export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
             <option value="all">Alle Kunden ({customers.length})</option>
             <option value="known">Stammkunden</option>
             <option value="rental">Mietkunden</option>
-            <option value="has_car">Mit eigenem Fahrzeug</option>
+            <option value="has_car">Mit Zusatzinfos</option>
           </select>
         </div>
       </div>
@@ -153,20 +155,20 @@ export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
                 </div>
               </div>
 
-              {/* Vehicle info */}
+              {/* Additional info */}
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-1">
                 <div className="flex items-center space-x-1.5 text-slate-700 font-medium text-[11px]">
-                  <Car className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                  <span>{cust.vehicle || 'Kein eignes Fahrzeug hinterlegt'}</span>
+                  <Info className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                  <span>{cust.additionalInfo || 'Keine Zusatzinfos hinterlegt'}</span>
                 </div>
-                {cust.licensePlate && (
+                {cust.referenceId && (
                   <p className="text-slate-500 font-mono text-[10px] pl-5">
-                    Kennzeichen: <span className="text-slate-700">{cust.licensePlate}</span>
+                    ID/Kennung: <span className="text-slate-700">{cust.referenceId}</span>
                   </p>
                 )}
                 {cust.lastVisitReason && (
                   <p className="text-slate-500 text-[10px] pl-5">
-                    Letzter Grund: <span className="text-blue-700">{cust.lastVisitReason}</span>
+                    Letzter Kontakt: <span className="text-blue-700">{cust.lastVisitReason}</span>
                   </p>
                 )}
               </div>
@@ -238,22 +240,22 @@ export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-slate-600 font-semibold block mb-1">Fahrzeugmodell</label>
+                  <label className="text-slate-600 font-semibold block mb-1">Zusatzinfos (Fahrzeug, Details etc.)</label>
                   <input
                     type="text"
-                    value={newVehicle}
-                    onChange={e => setNewVehicle(e.target.value)}
-                    placeholder="z.B. VW Passat 2021"
+                    value={newAdditionalInfo}
+                    onChange={e => setNewAdditionalInfo(e.target.value)}
+                    placeholder="z.B. Kunde bevorzugt..."
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 placeholder-slate-600 focus:outline-none focus:border-slate-300"
                   />
                 </div>
 
                 <div>
-                  <label className="text-slate-600 font-semibold block mb-1">Kennzeichen</label>
+                  <label className="text-slate-600 font-semibold block mb-1">ID / Kennung</label>
                   <input
                     type="text"
-                    value={newLicensePlate}
-                    onChange={e => setNewLicensePlate(e.target.value)}
+                    value={newReferenceId}
+                    onChange={e => setNewReferenceId(e.target.value)}
                     placeholder="z.B. KL-MM 1234"
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 placeholder-slate-600 focus:outline-none focus:border-slate-300"
                   />
@@ -318,9 +320,30 @@ export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
         <div className="fixed inset-0 z-50 bg-slate-100/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full shadow-2xl p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <div>
-                <h3 className="font-semibold text-slate-900 text-base">{activeCustomerDetail.name}</h3>
-                <p className="text-xs font-mono text-blue-700">{activeCustomerDetail.phone}</p>
+              <div className="w-full mr-4">
+                {isEditing ? (
+                  <div className="space-y-2 w-full">
+                    <input
+                      type="text"
+                      value={editName}
+                      onChange={e => setEditName(e.target.value)}
+                      placeholder="Name des Kunden"
+                      className="font-semibold text-slate-900 text-base w-full border border-slate-300 rounded p-1 focus:outline-none"
+                    />
+                    <input
+                      type="text"
+                      value={editPhone}
+                      onChange={e => setEditPhone(e.target.value)}
+                      placeholder="Telefonnummer"
+                      className="text-xs font-mono text-blue-700 w-full border border-slate-300 rounded p-1 focus:outline-none"
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <h3 className="font-semibold text-slate-900 text-base">{activeCustomerDetail.name}</h3>
+                    <p className="text-xs font-mono text-blue-700">{activeCustomerDetail.phone}</p>
+                  </>
+                )}
               </div>
               <button
                 onClick={() => setActiveCustomerDetail(null)}
@@ -332,26 +355,26 @@ export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
 
             <div className="space-y-3 text-xs">
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
-                <span className="text-slate-500 font-bold uppercase tracking-wider text-[10px] block">Fahrzeug & Kennzeichen</span>
+                <span className="text-slate-500 font-bold uppercase tracking-wider text-[10px] block">Zusatzinfos & Details</span>
                 {isEditing ? (
                   <input
                     type="text"
-                    value={editVehicle}
-                    onChange={e => setEditVehicle(e.target.value)}
-                    placeholder="z.B. BMW M3"
+                    value={editAdditionalInfo}
+                    onChange={e => setEditAdditionalInfo(e.target.value)}
+                    placeholder="Besondere Details, Zusatzinfos, etc."
                     className="w-full mt-1 border border-slate-300 rounded p-1.5 text-slate-800 focus:outline-none"
                   />
                 ) : (
-                  <p className="text-slate-800 font-medium">{activeCustomerDetail.vehicle || 'Kein Fahrzeug'}</p>
+                  <p className="text-slate-800 font-medium">{activeCustomerDetail.additionalInfo || 'Keine Zusatzinfos'}</p>
                 )}
-                {!isEditing && activeCustomerDetail.licensePlate && (
-                  <p className="text-slate-600 font-mono">Kennzeichen: {activeCustomerDetail.licensePlate}</p>
+                {!isEditing && activeCustomerDetail.referenceId && (
+                  <p className="text-slate-600 font-mono">ID/Kennung: {activeCustomerDetail.referenceId}</p>
                 )}
               </div>
 
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
-                <span className="text-slate-500 font-bold uppercase tracking-wider text-[10px] block">Historischer Besuchsgrund</span>
-                <p className="text-blue-700">{activeCustomerDetail.lastVisitReason || 'Kein historischer Werkstattbesuch gelistet'}</p>
+                <span className="text-slate-500 font-bold uppercase tracking-wider text-[10px] block">Letzter Kontakt / Historie</span>
+                <p className="text-blue-700">{activeCustomerDetail.lastVisitReason || 'Kein historischer Kontakt gelistet'}</p>
               </div>
 
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
@@ -361,8 +384,10 @@ export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
                     <button 
                       onClick={() => {
                         setIsEditing(true);
+                        setEditName(activeCustomerDetail.name || '');
+                        setEditPhone(activeCustomerDetail.phone || '');
                         setEditNotes(activeCustomerDetail.notes || '');
-                        setEditVehicle(activeCustomerDetail.vehicle || '');
+                        setEditAdditionalInfo(activeCustomerDetail.additionalInfo || '');
                       }}
                       className="text-blue-600 hover:text-blue-800"
                     >
@@ -391,13 +416,17 @@ export const CustomerDatabase: React.FC<CustomerDatabaseProps> = ({
                           if (onUpdateCustomer && activeCustomerDetail.id) {
                             onUpdateCustomer(activeCustomerDetail.id, {
                               ...activeCustomerDetail,
+                              name: editName.trim(),
+                              phone: editPhone.trim(),
                               notes: editNotes.trim(),
-                              vehicle: editVehicle.trim() || null
+                              additionalInfo: editAdditionalInfo.trim() || null
                             });
                             setActiveCustomerDetail({
                               ...activeCustomerDetail,
+                              name: editName.trim(),
+                              phone: editPhone.trim(),
                               notes: editNotes.trim(),
-                              vehicle: editVehicle.trim() || null
+                              additionalInfo: editAdditionalInfo.trim() || null
                             });
                             setIsEditing(false);
                           }

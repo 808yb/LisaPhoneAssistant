@@ -21,7 +21,10 @@ export const BusinessesTable: React.FC = () => {
           // Map DB data and inject dummy data for metrics
           const mapped = data.map((b: any) => ({
             id: b.id,
-            name: b.name,
+            name: b.business_facts?.metadata?.businessName || b.name,
+            phone: b.business_facts?.metadata?.phone || '',
+            email: b.business_facts?.metadata?.email || '',
+            twilioNumber: b.business_facts?.metadata?.twilioNumber || '',
             status: 'Online', 
             statusColor: 'text-emerald-600 bg-emerald-50', 
             plan: 'Professional', 
@@ -40,6 +43,38 @@ export const BusinessesTable: React.FC = () => {
     }
     loadBusinesses();
   }, []);
+
+  const [editingBiz, setEditingBiz] = useState<any>(null);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingBiz) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`/api/admin/businesses/${editingBiz.id}`, {
+        method: 'PUT',
+        headers: { 
+          'Authorization': `Bearer ${session?.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: editingBiz.name,
+          phone: editingBiz.phone,
+          email: editingBiz.email,
+          twilioNumber: editingBiz.twilioNumber
+        })
+      });
+      if (res.ok) {
+        setBusinesses(prev => prev.map(b => b.id === editingBiz.id ? { ...b, ...editingBiz } : b));
+        setEditingBiz(null);
+      } else {
+        alert("Fehler beim Speichern");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Netzwerkfehler");
+    }
+  };
 
   if (loading) {
     return <div className="p-8 text-slate-500">Lade Unternehmen...</div>;
@@ -103,10 +138,18 @@ export const BusinessesTable: React.FC = () => {
                   <td className="px-6 py-4 text-slate-600">{biz.knowledge}</td>
                   <td className="px-6 py-4 text-slate-500">{biz.lastActive}</td>
                   <td className="px-6 py-4 text-right">
-                    <button className="text-blue-600 hover:text-blue-800 font-medium text-sm flex items-center justify-end space-x-1 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
-                      <span>Öffnen</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </button>
+                    <div className="flex items-center justify-end space-x-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={() => setEditingBiz(biz)}
+                        className="text-slate-500 hover:text-slate-800 font-medium text-sm flex items-center space-x-1"
+                      >
+                        <span>Bearbeiten</span>
+                      </button>
+                      <button className="text-blue-600 hover:text-blue-800 font-medium text-sm flex items-center space-x-1">
+                        <span>Öffnen</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -114,6 +157,85 @@ export const BusinessesTable: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {editingBiz && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <h2 className="text-lg font-bold text-slate-800">Unternehmen bearbeiten</h2>
+              <button onClick={() => setEditingBiz(null)} className="text-slate-400 hover:text-slate-600 transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            
+            <form onSubmit={handleSave} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Unternehmensname</label>
+                <input
+                  type="text"
+                  required
+                  value={editingBiz.name}
+                  onChange={e => setEditingBiz({...editingBiz, name: e.target.value})}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Telefonnummer</label>
+                <input
+                  type="text"
+                  value={editingBiz.phone || ''}
+                  onChange={e => setEditingBiz({...editingBiz, phone: e.target.value})}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  placeholder="+49 123 456789"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">E-Mail Adresse</label>
+                <input
+                  type="email"
+                  value={editingBiz.email || ''}
+                  onChange={e => setEditingBiz({...editingBiz, email: e.target.value})}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  placeholder="kontakt@firma.de"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Twilio-Nummer (Lisa-Nummer)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-slate-400">📞</span>
+                  <input
+                    type="text"
+                    value={editingBiz.twilioNumber || ''}
+                    onChange={e => setEditingBiz({...editingBiz, twilioNumber: e.target.value})}
+                    className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 bg-blue-50/30"
+                    placeholder="+49 157 12345678"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">Diese Nummer sieht der Kunde in seinem Dashboard nicht. Nur für internes Routing.</p>
+              </div>
+
+              <div className="pt-4 flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingBiz(null)}
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                >
+                  Speichern
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

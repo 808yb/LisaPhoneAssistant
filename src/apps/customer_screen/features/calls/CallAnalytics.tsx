@@ -8,10 +8,10 @@ interface CallAnalyticsProps {
 
 export const CallAnalytics: React.FC<CallAnalyticsProps> = ({ leads }) => {
   const totalCalls = leads.length + 18; // Includes historical baseline demo calls
-  const workshopLeads = leads.filter(l => l.category === 'workshop').length + 12;
-  const salesLeads = leads.filter(l => l.category === 'sales' || l.category === 'test_drive').length + 8;
+  const serviceLeads = leads.filter(l => l.category === 'service').length + 12;
+  const salesLeads = leads.filter(l => l.category === 'sales' || l.category === 'booking').length + 8;
   const rentalLeads = leads.filter(l => l.category === 'rental').length + 5;
-  const sparePartsLeads = leads.filter(l => l.category === 'spare_parts').length + 4;
+  const supportLeads = leads.filter(l => l.category === 'support').length + 4;
 
   const highUrgencyCount = leads.filter(l => l.urgency === 'high').length;
 
@@ -25,7 +25,7 @@ export const CallAnalytics: React.FC<CallAnalyticsProps> = ({ leads }) => {
           <h2 className="text-base font-semibold text-slate-900 tracking-wide">Analysen & Effizienz-Auswertung</h2>
         </div>
         <p className="text-xs text-slate-600 mt-0.5">
-          Echtzeit-Metriken über Anrufvolumen, automatisierte Lead-Erfassung und Personalkosteneinsparung für das Autohaus Kaiserslautern.
+          Echtzeit-Metriken über Anrufvolumen, automatisierte Lead-Erfassung und Personalkosteneinsparung für Demo Unternehmen.
         </p>
       </div>
 
@@ -86,17 +86,17 @@ export const CallAnalytics: React.FC<CallAnalyticsProps> = ({ leads }) => {
           <div className="space-y-4 text-xs">
             <div>
               <div className="flex justify-between font-medium mb-1">
-                <span className="text-blue-700">Werkstatt & Inspektion</span>
-                <span className="text-slate-700">{workshopLeads} Leads ({Math.round((workshopLeads/totalCalls)*100)}%)</span>
+                <span className="text-blue-700">Dienstleistung & Service</span>
+                <span className="text-slate-700">{serviceLeads} Leads ({Math.round((serviceLeads/totalCalls)*100)}%)</span>
               </div>
               <div className="w-full bg-slate-50 h-2.5 rounded-full overflow-hidden border border-slate-200">
-                <div className="bg-indigo-500 h-full rounded-full transition-all" style={{ width: `${(workshopLeads/totalCalls)*100}%` }}></div>
+                <div className="bg-indigo-500 h-full rounded-full transition-all" style={{ width: `${(serviceLeads/totalCalls)*100}%` }}></div>
               </div>
             </div>
 
             <div>
               <div className="flex justify-between font-medium mb-1">
-                <span className="text-emerald-700">Fahrzeugverkauf & Probefahrt</span>
+                <span className="text-emerald-700">Produkte & Vertrieb</span>
                 <span className="text-slate-700">{salesLeads} Leads ({Math.round((salesLeads/totalCalls)*100)}%)</span>
               </div>
               <div className="w-full bg-slate-50 h-2.5 rounded-full overflow-hidden border border-slate-200">
@@ -106,7 +106,7 @@ export const CallAnalytics: React.FC<CallAnalyticsProps> = ({ leads }) => {
 
             <div>
               <div className="flex justify-between font-medium mb-1">
-                <span className="text-sky-700">Mietwagen-Anfragen</span>
+                <span className="text-sky-700">Vermietung & Verleih</span>
                 <span className="text-slate-700">{rentalLeads} Leads ({Math.round((rentalLeads/totalCalls)*100)}%)</span>
               </div>
               <div className="w-full bg-slate-50 h-2.5 rounded-full overflow-hidden border border-slate-200">
@@ -116,11 +116,11 @@ export const CallAnalytics: React.FC<CallAnalyticsProps> = ({ leads }) => {
 
             <div>
               <div className="flex justify-between font-medium mb-1">
-                <span className="text-amber-300">Ersatzteile & Zubehör</span>
-                <span className="text-slate-700">{sparePartsLeads} Leads ({Math.round((sparePartsLeads/totalCalls)*100)}%)</span>
+                <span className="text-amber-500">Hilfe & Support</span>
+                <span className="text-slate-700">{supportLeads} Leads ({Math.round((supportLeads/totalCalls)*100)}%)</span>
               </div>
               <div className="w-full bg-slate-50 h-2.5 rounded-full overflow-hidden border border-slate-200">
-                <div className="bg-amber-500 h-full rounded-full transition-all" style={{ width: `${(sparePartsLeads/totalCalls)*100}%` }}></div>
+                <div className="bg-amber-500 h-full rounded-full transition-all" style={{ width: `${(supportLeads/totalCalls)*100}%` }}></div>
               </div>
             </div>
           </div>
@@ -135,21 +135,22 @@ export const CallAnalytics: React.FC<CallAnalyticsProps> = ({ leads }) => {
 
           <div className="space-y-3 text-xs text-slate-700">
             <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
-              <span className="font-bold text-blue-700 uppercase tracking-wider text-[10px] block">⚡ Low Latency Conversational Engine</span>
+              <span className="font-bold text-blue-700 uppercase tracking-wider text-[10px] block">Low Latency Conversational Engine</span>
               <p className="text-slate-600 leading-relaxed text-[11px]">
                 Gemini 2.5/3.0 Flash liefert sofortige Antworten ohne störende Sprachpausen.
               </p>
             </div>
 
             <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
-              <span className="font-bold text-emerald-600 uppercase tracking-wider text-[10px] block">🎯 Autonome Werkzeugaufrufe (Tool Calling)</span>
-              <p className="text-slate-600 leading-relaxed text-[11px]">
-                Sobald Name, Anliegen und Rückrufzeit erfasst sind, führt die KI selbstständig <code className="text-blue-700 font-mono">save_lead()</code> aus.
-              </p>
+              <span className="font-bold text-emerald-600 uppercase tracking-wider text-[10px] block">Autonome Werkzeugaufrufe (Tool Calling)</span>
+              <div className="flex items-end justify-between mt-1">
+                <span className="text-xl font-black text-emerald-700">12</span>
+                <span className="text-xs text-emerald-600 mb-1">Tools genutzt</span>
+              </div>
             </div>
 
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
-              <span className="font-bold text-purple-300 uppercase tracking-wider text-[10px] block">🔍 Anrufer-Abgleich & Kontexterkennung</span>
+            <div className="bg-slate-900 border border-slate-700 p-4 rounded-xl shadow-inner relative overflow-hidden">
+              <span className="font-bold text-purple-300 uppercase tracking-wider text-[10px] block">Anrufer-Abgleich & Kontexterkennung</span>
               <p className="text-slate-600 leading-relaxed text-[11px]">
                 Integrierter Abgleich mit der Kundendatenbank (z.B. Kaiserslautern-Stammkunden) ermöglicht hochpersonalisierte Begrüßung.
               </p>

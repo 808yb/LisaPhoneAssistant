@@ -361,7 +361,7 @@ export const ScriptBuilder: React.FC = () => {
                     value={filler.keywords}
                     onChange={e => updateFillerField(catIdx, 'keywords', e.target.value)}
                     className="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                    placeholder="z.B. termin, werkstatt. Leer oder * = Standard-Lückenfüller"
+                    placeholder="z.B. termin, beratung. Leer oder * = Standard-Lückenfüller"
                   />
                 </div>
               </div>

@@ -11,6 +11,7 @@ import { DashboardOverview } from './features/dashboard/DashboardOverview';
 import { CalendarView } from './features/calendar/CalendarView';
 import { BusinessSettings } from './features/business/BusinessSettings';
 import { CustomerDatabase as CustomerList } from './features/customers/CustomerList';
+import { ResourceList } from './features/resources/ResourceList';
 import { CallAnalytics } from './features/calls/CallAnalytics';
 import { LandingPage } from './features/core/LandingPage';
 import { useCustomers } from './features/customers/hooks/useCustomers';
@@ -22,9 +23,10 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [businessName, setBusinessName] = useState<string>('');
+  const [businessId, setBusinessId] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'landing' | TabType>(() => {
     const hash = window.location.hash.replace('#', '');
-    if (['dashboard', 'calendar', 'calls', 'customers', 'business', 'analytics', 'simulator'].includes(hash)) {
+    if (['dashboard', 'calendar', 'calls', 'customers', 'resources', 'business', 'analytics', 'simulator'].includes(hash)) {
       return hash as TabType;
     }
     return 'landing';
@@ -37,7 +39,7 @@ export default function App() {
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash.replace('#', '');
-      if (['dashboard', 'calendar', 'calls', 'customers', 'business', 'analytics', 'simulator'].includes(hash)) {
+      if (['dashboard', 'calendar', 'calls', 'customers', 'resources', 'business', 'analytics', 'simulator'].includes(hash)) {
         setActiveTab(hash as TabType);
       } else {
         setActiveTab('landing');
@@ -87,6 +89,7 @@ export default function App() {
       
       if (res.ok && data.role === 'business' && data.business) {
         setBusinessName(data.business.name);
+        setBusinessId(data.business.id);
       } else if (res.status === 401 || res.status === 403 || data.role !== 'business') {
         console.error('Signing out locally because data.role is not business or unauthorized:', data);
         setIsAuthenticated(false);
@@ -165,7 +168,7 @@ export default function App() {
       <main className="flex-1">
         {loading ? (
           <div className="flex items-center justify-center h-64 text-slate-500 text-xs uppercase tracking-widest font-mono animate-pulse">
-            Lade Autohaus KI-Assistent...
+            Lade Lisa KI Assistentin...
           </div>
         ) : (
           <>
@@ -193,8 +196,8 @@ export default function App() {
               />
             )}
 
+            {activeTab === 'resources' && <ResourceList businessId={businessId} />}
             {activeTab === 'business' && <BusinessSettings />}
-
             {activeTab === 'analytics' && <CallAnalytics leads={leads} />}
 
             {activeTab === 'simulator' && (
@@ -209,7 +212,7 @@ export default function App() {
 
       {activeTab !== 'landing' && (
         <footer className="bg-white border-t border-slate-200 py-4 px-4 text-center text-[10px] uppercase tracking-widest text-slate-500 font-medium">
-          <p>Autohaus KI-Assistent &bull; Powering 24/7 Voice Intelligence</p>
+          <p>Lisa KI Assistentin &bull; Powering 24/7 Voice Intelligence</p>
         </footer>
       )}
     </div>

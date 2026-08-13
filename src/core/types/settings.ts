@@ -20,4 +20,8 @@ export interface BusinessFacts {
     bookAppointments: boolean;
     technicalAdvice: boolean;
   };
+  externalApiUrl?: string;
+  externalApiKey?: string;
+  webhookUrl?: string;
+  webhookSecret?: string;
 }

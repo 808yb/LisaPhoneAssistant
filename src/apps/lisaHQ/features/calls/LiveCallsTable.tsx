@@ -3,10 +3,10 @@ import { Phone, Search, Filter, Headphones } from 'lucide-react';
 
 export const LiveCallsTable: React.FC = () => {
   const calls = [
-    { business: 'Autohaus Kaiser', customer: 'Herr Müller', duration: '01:21', intent: 'Inspektion', confidence: '98%', status: 'Im Gespräch', statusColor: 'text-emerald-600 bg-emerald-50' },
+    { business: 'Unternehmen A', customer: 'Herr Müller', duration: '01:21', intent: 'Beratung', confidence: '98%', status: 'Im Gespräch', statusColor: 'text-emerald-600 bg-emerald-50' },
     { business: 'Dental Müller', customer: 'Frau Schmidt', duration: '00:45', intent: 'Neuer Termin', confidence: '92%', status: 'Im Gespräch', statusColor: 'text-emerald-600 bg-emerald-50' },
-    { business: 'BMW Center Mainz', customer: 'Unbekannt', duration: '04:12', intent: 'Beschwerde', confidence: '65%', status: 'Wird weitergeleitet', statusColor: 'text-amber-600 bg-amber-50' },
-    { business: 'Autohaus Kaiser', customer: 'Alex D.', duration: '02:30', intent: 'Öffnungszeiten', confidence: '99%', status: 'Abschluss', statusColor: 'text-blue-600 bg-blue-50' }
+    { business: 'Klinik B', customer: 'Unbekannt', duration: '04:12', intent: 'Beschwerde', confidence: '65%', status: 'Wird weitergeleitet', statusColor: 'text-amber-600 bg-amber-50' },
+    { business: 'Unternehmen A', customer: 'Alex D.', duration: '02:30', intent: 'Öffnungszeiten', confidence: '99%', status: 'Abschluss', statusColor: 'text-blue-600 bg-blue-50' }
   ];
 
   return (

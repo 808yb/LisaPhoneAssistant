@@ -85,7 +85,7 @@ export const Login: React.FC<LoginProps> = ({ type, onLogin }) => {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                  placeholder={isHQ ? 'admin@lisahq.com' : 'demo@autohaus.de'}
+                  placeholder={isHQ ? 'admin@lisahq.com' : 'demo@business.com'}
                   required
                 />
               </div>
@@ -127,7 +127,7 @@ export const Login: React.FC<LoginProps> = ({ type, onLogin }) => {
           
           <div className="mt-8 pt-6 border-t border-slate-100 text-center">
             <p className="text-xs text-slate-400 font-mono">
-              Dummy Login: {isHQ ? 'admin@lisahq.com / admin123' : 'demo@autohaus.de / demo123'}
+              Dummy Login: {isHQ ? 'admin@lisahq.com / admin123' : 'demo@business.com / demo123'}
             </p>
           </div>
         </div>

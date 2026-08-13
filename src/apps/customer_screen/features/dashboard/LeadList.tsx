@@ -1,5 +1,5 @@
 import React from 'react';
-import { ClipboardList, Phone, MessageSquare, Trash2, Car, Clock, UserCheck } from 'lucide-react';
+import { ClipboardList, Phone, MessageSquare, Trash2, Info, Clock, UserCheck, CheckCircle2 } from 'lucide-react';
 import { Lead, LeadStatus } from '../../../../core/types';
 import { getStatusBadge, getCategoryBadge, getUrgencyBadge } from './dashboard.utils';
 
@@ -30,8 +30,27 @@ export const LeadList: React.FC<LeadListProps> = ({
     );
   }
 
+  const activeLeads = leads.filter(l => l.status !== 'completed');
+
+  const handleMarkAllCompleted = () => {
+    activeLeads.forEach(lead => {
+      onUpdateLead(lead.id, { status: 'completed' });
+    });
+  };
+
   return (
     <div className="space-y-4">
+      {activeLeads.length > 0 && (
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={handleMarkAllCompleted}
+            className="flex items-center space-x-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-500 hover:text-white px-3 py-1.5 rounded-lg border border-emerald-200 transition-colors"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            <span>Alle offenen Anrufe als erledigt markieren</span>
+          </button>
+        </div>
+      )}
       {leads.map(lead => (
         <div
           key={lead.id}
@@ -62,68 +81,82 @@ export const LeadList: React.FC<LeadListProps> = ({
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
-                {lead.vehicleInfo && (
-                  <span className="flex items-center space-x-1.5">
-                    <Car className="w-3.5 h-3.5 text-blue-500" />
-                    <span>{lead.vehicleInfo}</span>
-                  </span>
-                )}
+              <div className="flex flex-wrap items-center gap-4 mt-2">
+                <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
+                  {lead.additionalInfo && lead.additionalInfo !== 'Keines' && lead.additionalInfo !== 'Keine Angabe' && (
+                    <span className="flex items-center space-x-1.5">
+                      <Info className="w-3.5 h-3.5 text-blue-500" />
+                      <span>{lead.additionalInfo}</span>
+                    </span>
+                  )}
 
-                {lead.preferredCallbackTime && (
-                  <span className="flex items-center space-x-1.5">
-                    <Clock className="w-3.5 h-3.5 text-amber-500" />
-                    <span>{lead.preferredCallbackTime}</span>
-                  </span>
-                )}
+                  {lead.preferredCallbackTime && (
+                    <span className="flex items-center space-x-1.5">
+                      <Clock className="w-3.5 h-3.5 text-amber-500" />
+                      <span>{lead.preferredCallbackTime}</span>
+                    </span>
+                  )}
 
-                {lead.assignedStaff && (
-                  <span className="flex items-center space-x-1.5">
-                    <UserCheck className="w-3.5 h-3.5 text-indigo-500" />
-                    <span>{lead.assignedStaff}</span>
-                  </span>
-                )}
+                  {lead.assignedStaff && (
+                    <span className="flex items-center space-x-1.5">
+                      <UserCheck className="w-3.5 h-3.5 text-indigo-500" />
+                      <span>{lead.assignedStaff}</span>
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
             {/* Right Action buttons */}
-            <div className="flex flex-col sm:flex-row md:flex-row items-center gap-3 shrink-0 mt-4 md:mt-0">
-              
-              <button
-                onClick={() => onStartCallWithLead(lead.phoneNumber, lead.callerName)}
-                className="w-8 h-8 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center transition-colors shadow-sm focus:outline-none"
-                title="Anrufen"
-              >
-                <Phone className="w-4 h-4" />
-              </button>
+            <div className="flex flex-col items-end gap-3 shrink-0 mt-4 md:mt-0">
+              <div className="flex flex-row items-center gap-3">
+                <button
+                  onClick={() => onStartCallWithLead(lead.phoneNumber, lead.callerName)}
+                  className="w-8 h-8 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center transition-colors shadow-sm focus:outline-none"
+                  title="Anrufen"
+                >
+                  <Phone className="w-4 h-4" />
+                </button>
 
-              <button
-                onClick={() => onViewLeadDetails(lead)}
-                className="w-8 h-8 rounded bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors border border-slate-200 focus:outline-none"
-                title="Details"
-              >
-                <MessageSquare className="w-4 h-4" />
-              </button>
+                <button
+                  onClick={() => onViewLeadDetails(lead)}
+                  className="w-8 h-8 rounded bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors border border-slate-200 focus:outline-none"
+                  title="Details"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                </button>
 
-              {/* Status quick switcher */}
-              <select
-                value={lead.status}
-                onChange={(e) => onUpdateLead(lead.id, { status: e.target.value as LeadStatus })}
-                className="bg-slate-50 border border-slate-200 text-slate-700 rounded-lg px-3 py-1.5 text-[11px] font-semibold focus:outline-none focus:border-blue-400 min-w-[140px]"
-              >
-                <option value="new">NEU</option>
-                <option value="in_progress">IN BEARBEITUNG</option>
-                <option value="callback_scheduled">RÜCKRUF GEPLANT</option>
-                <option value="completed">ABGESCHLOSSEN</option>
-              </select>
+                {/* Status quick switcher */}
+                <select
+                  value={lead.status}
+                  onChange={(e) => onUpdateLead(lead.id, { status: e.target.value as LeadStatus })}
+                  className="bg-slate-50 border border-slate-200 text-slate-700 rounded-lg px-3 py-1.5 text-[11px] font-semibold focus:outline-none focus:border-blue-400 min-w-[140px]"
+                >
+                  <option value="new">NEU</option>
+                  <option value="in_progress">IN BEARBEITUNG</option>
+                  <option value="callback_scheduled">RÜCKRUF GEPLANT</option>
+                  <option value="completed">ABGESCHLOSSEN</option>
+                </select>
 
-              <button
-                onClick={() => onDeleteLead(lead.id)}
-                className="p-1.5 text-slate-600 hover:text-red-600 transition-colors focus:outline-none"
-                title="Eintrag löschen"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+                <button
+                  onClick={() => onDeleteLead(lead.id)}
+                  className="p-1.5 text-slate-600 hover:text-red-600 transition-colors focus:outline-none"
+                  title="Eintrag löschen"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Erledigt button on the right */}
+              {lead.status !== 'completed' && (
+                <button
+                  onClick={() => onUpdateLead(lead.id, { status: 'completed' })}
+                  className="flex items-center justify-center space-x-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-500 hover:text-white px-3 py-1.5 rounded-lg border border-emerald-200 transition-colors shadow-sm w-full"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Als erledigt markieren</span>
+                </button>
+              )}
             </div>
 
           </div>

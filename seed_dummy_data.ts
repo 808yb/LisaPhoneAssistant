@@ -27,7 +27,7 @@ if (!supabaseUrl || !supabaseServiceKey) {
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 async function seed() {
-  console.log("🌱 Starting Database Seeding...");
+  console.log("Starting Database Seeding...");
 
   try {
     // 1. Create a Superadmin
@@ -40,22 +40,22 @@ async function seed() {
     if (adminErr && adminErr.code !== '23505') { // 23505 is unique violation, ignore if exists
         console.error("Error creating admin:", adminErr);
     } else {
-        console.log("✅ Superadmin ensured: superadmin@lisahq.com");
+        console.log("Superadmin ensured: superadmin@lisahq.com");
     }
 
     // 2. Create Dummy Business
     const { data: business, error: bizErr } = await supabase
       .from('businesses')
       .insert({
-        name: 'AutoHaus Müller Dummy',
-        industry: 'Automobile',
+        name: 'Demo Unternehmen Müller',
+        industry: 'Dienstleistung',
         twilio_phone_number: '+1234567890' // Dummy twilio number
       })
       .select()
       .single();
 
     if (bizErr) throw new Error(`Business creation failed: ${bizErr.message}`);
-    console.log(`✅ Business created: ${business.name} (${business.id})`);
+    console.log(`Business created: ${business.name} (${business.id})`);
 
     // 3. Create Business Facts
     const { error: factsErr } = await supabase
@@ -63,12 +63,12 @@ async function seed() {
       .insert({
         business_id: business.id,
         opening_hours: 'Montag bis Freitag: 08:00 - 18:00 Uhr, Samstag: 09:00 - 13:00 Uhr',
-        general_info: 'Wir sind eine zertifizierte Vertragswerkstatt für BMW und Audi. Kostenloser Hol- und Bringservice ab 200€ Reparaturwert.',
-        ai_prompt_instructions: 'Du bist Lisa, die freundliche KI-Assistentin von AutoHaus Müller. Du duzt die Kunden. Ziel ist es, Werkstatt-Termine zu qualifizieren.'
+        general_info: 'Wir sind ein zertifizierter Dienstleister. Wir bieten schnelle Bearbeitung.',
+        ai_prompt_instructions: 'Du bist Lisa, die freundliche KI-Assistentin des Unternehmens. Du duzt die Kunden. Ziel ist es, Termine zu qualifizieren.'
       });
       
     if (factsErr) throw new Error(`Business facts creation failed: ${factsErr.message}`);
-    console.log(`✅ Business facts created`);
+    console.log(`Business facts created`);
 
     // 4. Create Customers
     const { error: custErr } = await supabase
@@ -79,7 +79,7 @@ async function seed() {
       ]);
       
     if (custErr) throw new Error(`Customers creation failed: ${custErr.message}`);
-    console.log(`✅ Dummy customers created`);
+    console.log(`Dummy customers created`);
 
     // 5. Create Leads
     const { error: leadsErr } = await supabase
@@ -89,28 +89,54 @@ async function seed() {
           business_id: business.id, 
           name: 'Klaus Weber', 
           contact_info: '01601112223', 
-          vehicle_model: 'BMW 320d',
-          concern: 'Ölwechsel und Inspektion',
-          status: 'new'
+          concern: 'Beratung gewünscht',
+          status: 'new',
+          metadata: { additionalInfo: 'Prioritätskunde', category: 'service', urgency: 'normal' }
         },
         { 
           business_id: business.id, 
           name: 'Julia Wagner', 
           contact_info: 'julia.w@test.de', 
-          vehicle_model: 'Audi A4',
-          concern: 'Bremsen quietschen',
-          status: 'in_progress'
+          concern: 'Terminverschiebung',
+          status: 'in_progress',
+          metadata: { additionalInfo: 'Benötigt Rückruf am Nachmittag', category: 'support', urgency: 'high' }
         }
       ]);
 
     if (leadsErr) throw new Error(`Leads creation failed: ${leadsErr.message}`);
-    console.log(`✅ Dummy leads created`);
+    console.log(`Dummy leads created`);
 
-    console.log("\n🎉 Seeding complete!");
+    // 6. Create Resources
+    const { error: resErr } = await supabase
+      .from('resources')
+      .insert([
+        {
+          business_id: business.id,
+          name: 'BMW 320d Touring',
+          type: 'vehicle',
+          status: 'available',
+          metadata: { license_plate: 'KL-MM 123', seats: 5, color: 'Blau' }
+        },
+        {
+          business_id: business.id,
+          name: 'Beratungsraum A',
+          type: 'room',
+          status: 'available',
+          metadata: { room_number: '1.01', capacity: 10 }
+        }
+      ]);
+      
+    if (resErr) {
+      console.log(`(Info) Dummy resources not created. Ensure resources table exists. (${resErr.message})`);
+    } else {
+      console.log(`Dummy resources created`);
+    }
+
+    console.log("\nSeeding complete!");
     console.log(`\nIMPORTANT: Use this business_id for testing: ${business.id}`);
 
   } catch (err) {
-    console.error("\n❌ Seeding failed:", err);
+    console.error("\nSeeding failed:", err);
   }
 }
 

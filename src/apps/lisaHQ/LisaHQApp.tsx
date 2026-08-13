@@ -7,6 +7,7 @@ import { LatencyView } from './features/dashboard/LatencyView';
 import { BusinessesTable } from './features/businesses/BusinessesTable';
 import { LiveCallsTable } from './features/calls/LiveCallsTable';
 import { ScriptBuilder } from './features/scripts/ScriptBuilder';
+import { ResourceTemplates } from './features/resources/ResourceTemplates';
 import { Login } from '../../components/Login';
 import { supabase } from '../../core/supabaseClient';
 
@@ -92,6 +93,8 @@ export default function LisaHQApp() {
         return <LiveCallsTable />;
       case 'scripts':
         return <ScriptBuilder />;
+      case 'templates':
+        return <ResourceTemplates />;
       default:
         return (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-12 max-w-lg mx-auto mt-20 text-center space-y-4">

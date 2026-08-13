@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Building2, Clock, Wrench, Users, CalendarDays, BookOpen, Bot, Settings2, Save, Check, Info, ShieldCheck, X, Wand2, Loader2 } from 'lucide-react';
+import { Building2, Clock, Wrench, Users, CalendarDays, BookOpen, Bot, Settings2, Save, Check, Info, ShieldCheck, X, Wand2, Loader2, Network } from 'lucide-react';
 import { supabase } from '../../../../core/supabaseClient';
 import { BusinessFacts } from '../../../../core/types';
 
@@ -210,6 +210,7 @@ export const BusinessSettings: React.FC = () => {
     { id: 'knowledge-base', label: 'Wissensdatenbank', icon: BookOpen },
     { id: 'permissions', label: 'Befugnisse', icon: ShieldCheck },
     { id: 'ai-behavior', label: 'KI-Verhalten', icon: Bot },
+    { id: 'integrations', label: 'API & Integrationen', icon: Network },
   ];
 
   if (loading || !facts) {
@@ -422,6 +423,45 @@ export const BusinessSettings: React.FC = () => {
             <div>
               <label className="text-sm font-semibold text-slate-700 block mb-1">Systemanweisungen & Rote Linien (Guardrails)</label>
               <textarea rows={6} value={facts.guardrailsPrompt} onChange={e => setFacts({ ...facts, guardrailsPrompt: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="z.B. Sei stets formell, nutze das 'Sie', verspreche niemals kostenlose Leistungen..." />
+            </div>
+          </div>
+        );
+      case 'integrations':
+        return (
+          <div className="space-y-6">
+            <div className="bg-purple-50 border border-purple-100 rounded-lg p-4 flex gap-3">
+              <Network className="w-5 h-5 text-purple-600 shrink-0 mt-0.5" />
+              <div>
+                <h4 className="font-semibold text-purple-900 text-sm">Externe Datenbank & Webhooks (Live Sync)</h4>
+                <p className="text-xs text-purple-800 mt-1">Verbinden Sie Lisa mit Ihrer bestehenden Unternehmenssoftware (z.B. CRM, ERP oder Buchungssystem). So kann Lisa Live-Verfügbarkeiten prüfen und neue Leads/Termine direkt in Ihr System übertragen.</p>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              <h5 className="text-sm font-semibold text-slate-800 border-b border-slate-200 pb-2">1. Live API (Verfügbarkeiten abfragen)</h5>
+              <div>
+                <label className="text-sm font-semibold text-slate-700 block mb-1">API Endpoint URL</label>
+                <input type="url" value={facts.externalApiUrl || ''} onChange={e => setFacts({ ...facts, externalApiUrl: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="https://api.mein-system.de/v1/availability" />
+                <p className="text-xs text-slate-500 mt-1">Die URL, die Lisa bei Kundenanfragen (Mietwagen, Zimmer, etc.) anfunkt.</p>
+              </div>
+              <div>
+                <label className="text-sm font-semibold text-slate-700 block mb-1">Auth Token (Bearer)</label>
+                <input type="password" value={facts.externalApiKey || ''} onChange={e => setFacts({ ...facts, externalApiKey: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="Ihr geheimer API-Schlüssel" />
+              </div>
+            </div>
+
+            <div className="space-y-4 mt-8">
+              <h5 className="text-sm font-semibold text-slate-800 border-b border-slate-200 pb-2">2. Webhooks (Leads & Termine empfangen)</h5>
+              <div>
+                <label className="text-sm font-semibold text-slate-700 block mb-1">Webhook Endpoint URL</label>
+                <input type="url" value={facts.webhookUrl || ''} onChange={e => setFacts({ ...facts, webhookUrl: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="https://api.mein-system.de/v1/webhook/leads" />
+                <p className="text-xs text-slate-500 mt-1">Dorthin sendet Lisa einen HTTP POST Request mit den generierten Lead-Daten (JSON).</p>
+              </div>
+              <div>
+                <label className="text-sm font-semibold text-slate-700 block mb-1">Webhook Secret / Auth Token</label>
+                <input type="password" value={facts.webhookSecret || ''} onChange={e => setFacts({ ...facts, webhookSecret: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="Token zur Absicherung der Webhooks" />
+                <p className="text-xs text-slate-500 mt-1">Dieses Token wird im `Authorization: Bearer &lt;token&gt;` Header mitgesendet, damit Sie verifizieren können, dass die Anfrage sicher von Lisa stammt.</p>
+              </div>
             </div>
           </div>
         );

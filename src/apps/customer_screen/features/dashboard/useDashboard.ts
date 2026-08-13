@@ -19,8 +19,8 @@ export const useDashboard = (leads: Lead[]) => {
         const matchName = lead.callerName.toLowerCase().includes(q);
         const matchPhone = lead.phoneNumber.includes(q);
         const matchConcern = lead.concern.toLowerCase().includes(q);
-        const matchVehicle = lead.vehicleInfo?.toLowerCase().includes(q);
-        if (!matchName && !matchPhone && !matchConcern && !matchVehicle) return false;
+        const matchAdditionalInfo = lead.additionalInfo?.toLowerCase().includes(q);
+        if (!matchName && !matchPhone && !matchConcern && !matchAdditionalInfo) return false;
       }
       return true;
     });

@@ -27,7 +27,7 @@ export const FleetView: React.FC = () => {
           <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
             <div className="flex items-center space-x-3">
               <Circle className="w-3 h-3 text-emerald-500 fill-emerald-500" />
-              <span className="font-semibold text-slate-700">Autohaus Kaiser</span>
+              <span className="font-semibold text-slate-700">Unternehmen A</span>
             </div>
             <div className="flex items-center space-x-2 text-sm text-blue-600 font-medium bg-blue-50 px-3 py-1 rounded-full">
               <PhoneCall className="w-4 h-4" />
@@ -38,7 +38,7 @@ export const FleetView: React.FC = () => {
           <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
             <div className="flex items-center space-x-3">
               <Circle className="w-3 h-3 text-emerald-500 fill-emerald-500" />
-              <span className="font-semibold text-slate-700">BMW Center Mainz</span>
+              <span className="font-semibold text-slate-700">Klinik B</span>
             </div>
             <span className="text-sm text-slate-500 font-medium px-3">Inaktiv</span>
           </div>
@@ -68,7 +68,7 @@ export const FleetView: React.FC = () => {
           <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border-l-4 border-l-rose-400">
             <div className="flex items-center space-x-3">
               <Circle className="w-3 h-3 text-rose-500 fill-rose-500" />
-              <span className="font-semibold text-slate-700">Autohaus Weber</span>
+              <span className="font-semibold text-slate-700">Kanzlei C</span>
             </div>
             <div className="flex items-center space-x-2 text-sm text-rose-600 font-medium bg-rose-50 px-3 py-1 rounded-full">
               <AlertTriangle className="w-4 h-4" />

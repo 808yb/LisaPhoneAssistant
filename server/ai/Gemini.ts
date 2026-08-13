@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { saveLeadFunctionDeclaration, updateLeadFunctionDeclaration } from "./Tools";
+import { saveLeadFunctionDeclaration, updateLeadFunctionDeclaration, checkAvailabilityFunctionDeclaration, bookAppointmentFunctionDeclaration, checkAvailableResourcesFunctionDeclaration, checkExternalAvailabilityFunctionDeclaration } from "./Tools";
 import { PromptBuilder } from "./PromptBuilder";
 import { createClient } from "@supabase/supabase-js";
 import { metrics } from "../metrics";
@@ -12,6 +12,8 @@ export const scriptedResponses: Record<string, string> = {
   '[SCRIPT_ANYTHING_ELSE]': 'Ich habe Ihr Anliegen gespeichert. Gibt es noch etwas, was ich heute für Sie tun kann?',
   '[SCRIPT_FILLER_APPOINTMENT]': 'Ich schaue kurz nach freien Terminen um.',
   '[SCRIPT_FILLER_WAIT]': 'Einen kleinen Moment bitte.',
+  '[SCRIPT_FILLER_NOTE]': 'Ich notiere mir das kurz.',
+  '[SCRIPT_FILLER_SEARCH]': 'Ich gucke mal kurz nach.',
   '[SCRIPT_FAREWELL]': 'Vielen Dank! Ich habe Ihr Anliegen an unser Team weitergeleitet. Auf Wiederhören.'
 };
 
@@ -50,7 +52,7 @@ export class GeminiService {
         toolCalled: false,
         savedLeadData: null,
         updatedLeadData: null,
-        matchedCustomer: matchedCustomer ? { name: matchedCustomer.name, vehicle: matchedCustomer.vehicle } : null
+        matchedCustomer: matchedCustomer ? { name: matchedCustomer.name, vehicle: matchedCustomer.metadata?.vehicle } : null
       };
     }
 
@@ -68,6 +70,13 @@ export class GeminiService {
       contents.push({ role: 'user', parts: [{ text: userMessage }] });
     }
 
+    const activeTools: any[] = [{ functionDeclarations: [saveLeadFunctionDeclaration, updateLeadFunctionDeclaration, checkAvailabilityFunctionDeclaration, bookAppointmentFunctionDeclaration] }];
+    if (businessFacts?.externalApiUrl) {
+      activeTools[0].functionDeclarations.push(checkExternalAvailabilityFunctionDeclaration);
+    } else {
+      activeTools[0].functionDeclarations.push(checkAvailableResourcesFunctionDeclaration);
+    }
+
     const t0 = performance.now();
     const response = await this.ai.models.generateContent({
       model: "gemini-3.6-flash",
@@ -75,7 +84,7 @@ export class GeminiService {
       config: {
         systemInstruction,
         temperature: 0.7,
-        tools: [{ functionDeclarations: [saveLeadFunctionDeclaration, updateLeadFunctionDeclaration] }]
+        tools: activeTools
       }
     });
     metrics.record('gemini', performance.now() - t0);
@@ -115,22 +124,42 @@ export class GeminiService {
           const args: any = call.args;
 
           savedLeadData = {
-            id: 'lead-' + Date.now().toString(36),
             business_id: business_id,
-            caller_name: args.callerName || (matchedCustomer?.name || 'Unbekannt'),
-            phone_number: args.phoneNumber || phoneNumber,
-            category: args.category || 'general',
+            name: args.callerName || (matchedCustomer?.name || 'Unbekannt'),
+            contact_info: args.phoneNumber || phoneNumber,
             concern: args.concern || 'Anfrage',
-            urgency: args.urgency || 'normal',
-            vehicle_info: args.vehicleInfo || (matchedCustomer?.vehicle || ''),
-            preferred_callback_time: args.preferredCallbackTime || 'Heute',
             status: 'new',
-            notes: 'Automatisch qualifiziert',
-            transcript: history || [],
-            assigned_staff: args.category === 'workshop' ? 'Werkstatt' : 'Empfang'
+            metadata: {
+              category: args.category || 'general',
+              urgency: args.urgency || 'normal',
+              vehicleInfo: args.vehicleInfo || (matchedCustomer?.metadata?.vehicle || ''),
+              preferredCallbackTime: args.preferredCallbackTime || 'Heute',
+              notes: 'Automatisch qualifiziert',
+              transcript: history || [],
+              assignedStaff: args.category === 'workshop' ? 'Werkstatt' : 'Empfang'
+            }
           };
 
-          await this.supabase.from('leads').insert(savedLeadData);
+          const { data: insertedLead, error: insertError } = await this.supabase.from('leads').insert(savedLeadData).select().single();
+          if (insertError) {
+            console.error("Fehler beim Speichern des Leads:", insertError);
+          } else if (insertedLead) {
+            savedLeadData.id = insertedLead.id; // Get the real UUID back
+            
+            // Fire Webhook if configured
+            const webhookUrl = businessFacts?.metadata?.webhookUrl;
+            if (webhookUrl) {
+              const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+              const secret = businessFacts?.metadata?.webhookSecret;
+              if (secret) headers['Authorization'] = `Bearer ${secret}`;
+              
+              fetch(webhookUrl, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ event: 'lead_created', data: savedLeadData })
+              }).catch(err => console.error('Webhook failed for lead_created', err));
+            }
+          }
 
           // Auto-create customer if it's a new caller
           if (!matchedCustomer && args.callerName) {
@@ -159,8 +188,7 @@ export class GeminiService {
                 { role: 'user', parts: [{ functionResponse: { name: 'save_lead', response: { success: true } } }] }
               ],
               config: {
-                systemInstruction,
-                tools: [{ functionDeclarations: [saveLeadFunctionDeclaration, updateLeadFunctionDeclaration] }]
+                systemInstruction
               }
             });
             if (followUpRes.text) {
@@ -215,8 +243,7 @@ export class GeminiService {
                 { role: 'user', parts: [{ functionResponse: { name: 'update_lead', response: { success: true } } }] }
               ],
               config: {
-                systemInstruction,
-                tools: [{ functionDeclarations: [saveLeadFunctionDeclaration, updateLeadFunctionDeclaration] }]
+                systemInstruction
               }
             });
             if (followUpRes.text) {
@@ -234,6 +261,268 @@ export class GeminiService {
           } catch (e) {
             assistantText = "Vielen Dank, wir haben alles notiert!";
             endCall = true;
+          }
+        } else if (call.name === 'check_availability') {
+          toolCalled = true;
+          const { date } = call.args as any;
+          const startOfDay = new Date(date);
+          startOfDay.setHours(0, 0, 0, 0);
+          const endOfDay = new Date(date);
+          endOfDay.setHours(23, 59, 59, 999);
+          
+          const { data: appts } = await this.supabase.from('appointments')
+            .select('start_time, end_time, title')
+            .eq('business_id', business_id)
+            .gte('start_time', startOfDay.toISOString())
+            .lte('end_time', endOfDay.toISOString());
+            
+          const dayIndex = startOfDay.getDay();
+          const daysMap = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+          const dayName = daysMap[dayIndex];
+          
+          let isClosed = false;
+          let hoursText = "Öffnungszeiten: (Siehe System-Prompt).";
+          if (businessFacts?.openingHours && Array.isArray(businessFacts.openingHours)) {
+            const dayInfo = businessFacts.openingHours.find((h: any) => h.day === dayName);
+            if (dayInfo) {
+              if (dayInfo.closed) {
+                isClosed = true;
+                hoursText = `WICHTIG: Das Geschäft hat an diesem Tag (${dayName}) GESCHLOSSEN! Teile dem Kunden freundlich mit, dass an diesem Tag geschlossen ist und schlage einen anderen Tag vor.`;
+              } else {
+                hoursText = `Das Geschäft hat am ${dayName} von ${dayInfo.open} bis ${dayInfo.close} Uhr geöffnet. Schlage NUR Termine innerhalb dieser Zeiten vor!`;
+              }
+            }
+          }
+
+          let responseText = isClosed ? hoursText : `${hoursText}\nAn diesem Tag sind bisher keine Termine gebucht.`;
+          if (!isClosed && appts && appts.length > 0) {
+            responseText = `${hoursText}\nFolgende Termine sind bereits gebucht (diese Zeiten sind BLOCKIERT): ` + appts.map((a: any) => `${new Date(a.start_time).toLocaleTimeString('de-DE', {hour: '2-digit', minute:'2-digit'})} bis ${new Date(a.end_time).toLocaleTimeString('de-DE', {hour: '2-digit', minute:'2-digit'})}`).join(", ");
+          }
+
+          try {
+            const followUpRes = await this.ai.models.generateContent({
+              model: "gemini-3.6-flash",
+              contents: [
+                ...contents,
+                response.candidates?.[0]?.content || { role: 'model', parts: [{ functionCall: call }] },
+                { role: 'user', parts: [{ functionResponse: { name: 'check_availability', response: { result: responseText } } }] }
+              ],
+              config: {
+                systemInstruction
+              }
+            });
+            const text = followUpRes.text;
+            if (text && text.trim().length > 0) {
+              assistantText = text;
+            } else {
+              // If the model tried to chain tool calls instead of replying, we intercept and ask the user.
+              assistantText = "Ich habe gerade im Kalender nachgesehen. Welchen Tag oder welche Uhrzeit soll ich noch einmal genau prüfen?";
+            }
+          } catch (e) {
+            assistantText = "Entschuldigung, ich konnte den Kalender gerade nicht prüfen.";
+          }
+        } else if (call.name === 'book_appointment') {
+          toolCalled = true;
+          const args = call.args as any;
+          let toolSuccess = true;
+          let toolError = '';
+
+          // Check for duplicates to prevent Lisa from double-booking
+          const { data: existingAppts } = await this.supabase
+            .from('appointments')
+            .select('id')
+            .eq('business_id', business_id)
+            .eq('start_time', args.startTime);
+
+          let customerId = matchedCustomer ? matchedCustomer.id : null;
+
+          // Auto-create customer if it's a new caller
+          if (!customerId && args.callerName) {
+            try {
+              const { data: newCust } = await this.supabase.from('customers').insert({
+                business_id: business_id,
+                name: args.callerName,
+                phone: phoneNumber,
+                notes: 'Automatisch durch Lisa bei Terminbuchung angelegt.',
+                metadata: {
+                  isKnownCustomer: false
+                }
+              }).select('id').single();
+              if (newCust) customerId = newCust.id;
+            } catch (err) {
+              console.error('Failed to auto-create customer in book_appointment', err);
+            }
+          }
+
+          if (!existingAppts || existingAppts.length === 0) {
+            const { data: insertedAppt, error: insertApptErr } = await this.supabase.from('appointments').insert({
+              business_id,
+              customer_id: customerId,
+              title: args.title,
+              start_time: args.startTime,
+              end_time: args.endTime,
+              notes: args.notes || 'Gebucht durch KI Assistentin Lisa',
+              status: 'confirmed'
+            }).select().single();
+
+            if (insertApptErr) {
+              console.error('Failed to insert appointment:', insertApptErr);
+              toolSuccess = false;
+              toolError = insertApptErr.message;
+            } else if (insertedAppt) {
+              if (args.resourceId) {
+                await this.supabase.from('resources')
+                  .update({ status: 'in_use' })
+                  .eq('id', args.resourceId)
+                  .eq('business_id', business_id);
+              } else if (args.resourceName) {
+                const { data: res } = await this.supabase.from('resources')
+                  .select('id')
+                  .ilike('name', `%${args.resourceName}%`)
+                  .eq('business_id', business_id)
+                  .eq('status', 'available')
+                  .limit(1);
+                if (res && res.length > 0) {
+                  await this.supabase.from('resources')
+                    .update({ status: 'in_use' })
+                    .eq('id', res[0].id)
+                    .eq('business_id', business_id);
+                }
+              }
+
+              // Also create a Lead so the call shows up in the Anrufhistorie
+              savedLeadData = {
+                business_id: business_id,
+                name: args.callerName || (matchedCustomer?.name || 'Unbekannt'),
+                contact_info: phoneNumber,
+                concern: 'Terminbuchung: ' + args.title,
+                status: 'closed', // Mark as closed since it's already a confirmed appointment
+                metadata: {
+                  category: 'booking',
+                  urgency: 'normal',
+                  notes: 'Termin wurde von Lisa gebucht: ' + (args.notes || ''),
+                  transcript: history || []
+                }
+              };
+              try {
+                await this.supabase.from('leads').insert(savedLeadData);
+              } catch (e) {
+                console.error("Failed to insert lead for appointment:", e);
+              }
+            }
+
+            // Fire Webhook if configured
+            const webhookUrl = businessFacts?.webhookUrl;
+            if (webhookUrl) {
+              const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+              const secret = businessFacts?.webhookSecret;
+              if (secret) headers['Authorization'] = `Bearer ${secret}`;
+              
+              fetch(webhookUrl, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ event: 'appointment_booked', data: insertedAppt })
+              }).catch(err => console.error('Webhook failed for appointment_booked', err));
+            }
+          } else {
+             toolSuccess = false;
+             toolError = 'Termin existiert bereits zur gleichen Zeit.';
+          }
+
+          try {
+            const followUpRes = await this.ai.models.generateContent({
+              model: "gemini-3.6-flash",
+              contents: [
+                ...contents,
+                response.candidates?.[0]?.content || { role: 'model', parts: [{ functionCall: call }] },
+                { role: 'user', parts: [{ functionResponse: { name: 'book_appointment', response: { success: toolSuccess, error: toolError } } }] }
+              ],
+              config: {
+                systemInstruction
+              }
+            });
+            assistantText = followUpRes.text || "Der Termin wurde erfolgreich gebucht.";
+          } catch (e) {
+            assistantText = "Entschuldigung, beim Buchen des Termins ist ein Fehler aufgetreten.";
+          }
+        } else if (call.name === 'check_available_resources') {
+          toolCalled = true;
+          const args = call.args as any;
+          let query = this.supabase.from('resources').select('*').eq('business_id', business_id).eq('status', 'available');
+          if (args.type) query = query.eq('type', args.type);
+          const { data: resources } = await query;
+          
+          let responseText = "Es wurden keine freien Ressourcen gefunden.";
+          if (resources && resources.length > 0) {
+            responseText = "Freie Ressourcen:\n" + resources.map((r: any) => `- ID: ${r.id} | Name: ${r.name} (Details: ${JSON.stringify(r.metadata)})`).join('\n');
+          }
+
+          try {
+            const followUpRes = await this.ai.models.generateContent({
+              model: "gemini-3.6-flash",
+              contents: [
+                ...contents,
+                response.candidates?.[0]?.content || { role: 'model', parts: [{ functionCall: call }] },
+                { role: 'user', parts: [{ functionResponse: { name: 'check_available_resources', response: { result: responseText } } }] }
+              ],
+              config: {
+                systemInstruction
+              }
+            });
+            assistantText = followUpRes.text || "Ich habe die Ressourcen geprüft.";
+          } catch (e) {
+            assistantText = "Entschuldigung, ich konnte die Ressourcen gerade nicht prüfen.";
+          }
+        } else if (call.name === 'check_external_availability') {
+          toolCalled = true;
+          const args = call.args as any;
+          
+          const externalUrl = businessFacts?.externalApiUrl;
+          const externalKey = businessFacts?.externalApiKey;
+
+          let responseText = "Das externe System konnte nicht erreicht werden oder ist nicht konfiguriert.";
+
+          if (externalUrl) {
+            console.log(`Live-Abfrage externes System: ${externalUrl} für Typ: ${args.resourceType}`);
+            try {
+              const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+              if (externalKey) {
+                headers['Authorization'] = `Bearer ${externalKey}`;
+              }
+              const fetchRes = await fetch(externalUrl, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ action: 'check_availability', date: args.date, type: args.resourceType })
+              });
+              
+              if (fetchRes.ok) {
+                const data = await fetchRes.json();
+                responseText = `Die Live-Verfügbarkeit besagt: ${JSON.stringify(data)}`;
+              } else {
+                console.error('External API returned error', fetchRes.status);
+              }
+            } catch (err) {
+              console.error('External API request failed', err);
+            }
+          } else {
+            responseText = "Es ist keine externe API konfiguriert.";
+          }
+
+          try {
+            const followUpRes = await this.ai.models.generateContent({
+              model: "gemini-3.6-flash",
+              contents: [
+                ...contents,
+                response.candidates?.[0]?.content || { role: 'model', parts: [{ functionCall: call }] },
+                { role: 'user', parts: [{ functionResponse: { name: 'check_external_availability', response: { result: responseText } } }] }
+              ],
+              config: {
+                systemInstruction
+              }
+            });
+            assistantText = followUpRes.text || "Ich habe die externe Verfügbarkeit geprüft.";
+          } catch (e) {
+            assistantText = "Entschuldigung, das externe System antwortet gerade nicht.";
           }
         }
       }

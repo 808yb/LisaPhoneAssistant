@@ -75,12 +75,12 @@ app.use(async (req, res, next) => {
     if (user && !error) {
       (req as any).user = user;
       
-      console.log(`[Auth] User ${user.email} authenticated`);
+      // console.log(`[Auth] User ${user.email} authenticated`);
       
       // Check if superadmin
       const { data: admin } = await supabaseAdmin.from('lisahq_admins').select('id').eq('email', user.email).maybeSingle();
       if (admin) {
-        console.log(`[Auth] User is superadmin`);
+        // console.log(`[Auth] User is superadmin`);
         (req as any).is_superadmin = true;
         return next();
       }
@@ -88,17 +88,17 @@ app.use(async (req, res, next) => {
       // Check if business user
       const { data: bizUser } = await supabaseAdmin.from('business_users').select('business_id').eq('user_id', user.id).maybeSingle();
       if (bizUser) {
-        console.log(`[Auth] User is business user for ${bizUser.business_id}`);
+        // console.log(`[Auth] User is business user for ${bizUser.business_id}`);
         (req as any).business_id = bizUser.business_id;
         return next();
       } else {
-        console.log(`[Auth] User not found in business_users! ID: ${user.id}`);
+        // console.log(`[Auth] User not found in business_users! ID: ${user.id}`);
       }
     } else {
-      console.log(`[Auth] Supabase auth error:`, error);
+      // console.log(`[Auth] Supabase auth error:`, error);
     }
   } else {
-    console.log(`[Auth] No valid auth header found for ${req.path}`);
+    // console.log(`[Auth] No valid auth header found for ${req.path}`);
   }
 
   // List of public API endpoints that don't require JWT authentication
@@ -152,11 +152,50 @@ app.get('/api/admin/businesses', async (req, res) => {
 
   const { data, error } = await supabaseAdmin
     .from('businesses')
-    .select('*')
+    .select('*, business_facts (metadata)')
     .order('created_at', { ascending: false });
 
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+app.put('/api/admin/businesses/:id', async (req, res) => {
+  const is_superadmin = (req as any).is_superadmin;
+  if (!is_superadmin) return res.status(403).json({ error: 'Forbidden' });
+
+  const { id } = req.params;
+  const { name, phone, email, twilioNumber } = req.body;
+
+  // 1. Update name in 'businesses'
+  if (name) {
+    const { error: bizError } = await supabaseAdmin
+      .from('businesses')
+      .update({ name })
+      .eq('id', id);
+    if (bizError) return res.status(500).json({ error: bizError.message });
+  }
+
+  // 2. Fetch existing business_facts to merge metadata
+  const { data: existingFacts, error: fetchError } = await supabaseAdmin
+    .from('business_facts')
+    .select('metadata')
+    .eq('business_id', id)
+    .single();
+
+  let newMetadata = existingFacts?.metadata || {};
+  if (phone !== undefined) newMetadata.phone = phone;
+  if (email !== undefined) newMetadata.email = email;
+  if (name !== undefined) newMetadata.businessName = name;
+  if (twilioNumber !== undefined) newMetadata.twilioNumber = twilioNumber;
+
+  // 3. Upsert updated metadata
+  const { error: factsError } = await supabaseAdmin
+    .from('business_facts')
+    .upsert({ business_id: id, metadata: newMetadata }, { onConflict: 'business_id' });
+
+  if (factsError) return res.status(500).json({ error: factsError.message });
+
+  res.json({ success: true, name, metadata: newMetadata });
 });
 
 app.get('/api/admin/scripts/:businessId', async (req, res) => {
@@ -438,7 +477,19 @@ app.get('/api/leads', async (req, res) => {
 
   const { data, error } = await supabaseAdmin.from('leads').select('*').eq('business_id', business_id).order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  
+  const mappedData = data.map((d: any) => ({
+    ...d,
+    callerName: d.name, // the db uses "name", front expects "callerName"
+    phoneNumber: d.contact_info, // db uses "contact_info"
+    createdAt: d.created_at,
+    updatedAt: d.updated_at,
+    additionalInfo: d.metadata?.vehicleInfo || d.metadata?.additionalInfo,
+    preferredCallbackTime: d.metadata?.preferredCallbackTime,
+    assignedStaff: d.metadata?.assignedStaff
+  }));
+
+  res.json(mappedData);
 });
 
 // Save Lead endpoint
@@ -554,7 +605,11 @@ app.get('/api/business-facts', async (req, res) => {
     teamMembers: data.metadata?.teamMembers || '',
     appointmentRules: data.metadata?.appointmentRules || '',
     knowledgeBase: data.metadata?.knowledgeBase || '',
-    permissions: perms
+    permissions: perms,
+    externalApiUrl: data.metadata?.externalApiUrl || '',
+    externalApiKey: data.metadata?.externalApiKey || '',
+    webhookUrl: data.metadata?.webhookUrl || '',
+    webhookSecret: data.metadata?.webhookSecret || ''
   });
 });
 
@@ -577,7 +632,11 @@ app.post('/api/business-facts', async (req, res) => {
     services: req.body.services,
     teamMembers: req.body.teamMembers,
     appointmentRules: req.body.appointmentRules,
-    knowledgeBase: req.body.knowledgeBase
+    knowledgeBase: req.body.knowledgeBase,
+    externalApiUrl: req.body.externalApiUrl,
+    externalApiKey: req.body.externalApiKey,
+    webhookUrl: req.body.webhookUrl,
+    webhookSecret: req.body.webhookSecret
   };
 
   const payload = {
@@ -588,6 +647,183 @@ app.post('/api/business-facts', async (req, res) => {
   const { data, error } = await supabaseAdmin.from('business_facts').upsert(payload, { onConflict: 'business_id' }).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(req.body);
+});
+
+// --- RESOURCES ---
+app.get('/api/resources', async (req, res) => {
+  const business_id = (req as any).business_id;
+  const { data, error } = await supabaseAdmin.from('resources').select('*').eq('business_id', business_id).order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.get('/api/external-resources', async (req, res) => {
+  const business_id = (req as any).business_id;
+  
+  // 1. Fetch business facts to get the external API URL and token
+  const { data: bf, error } = await supabaseAdmin
+    .from('business_facts')
+    .select('metadata')
+    .eq('business_id', business_id)
+    .single();
+
+  if (error || !bf || !bf.metadata?.externalApiUrl) {
+    return res.status(400).json({ error: "Keine externe API konfiguriert." });
+  }
+
+  const url = bf.metadata.externalApiUrl;
+  const token = bf.metadata.externalApiKey;
+
+  // 2. Fetch from the external API
+  try {
+    const fetchRes = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({ action: 'list_resources' })
+    });
+
+    if (!fetchRes.ok) {
+      return res.status(fetchRes.status).json({ error: "Fehler beim Abrufen der externen Ressourcen." });
+    }
+
+    const data = await fetchRes.json();
+    res.json(data.resources || []); // Expect the edge function to return { resources: [...] }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/external-resources/update', async (req, res) => {
+  const business_id = (req as any).business_id;
+  const { id, status } = req.body;
+  
+  const { data: bf, error } = await supabaseAdmin
+    .from('business_facts')
+    .select('metadata')
+    .eq('business_id', business_id)
+    .single();
+
+  if (error || !bf || !bf.metadata?.externalApiUrl) {
+    return res.status(400).json({ error: "Keine externe API konfiguriert." });
+  }
+
+  const url = bf.metadata.externalApiUrl;
+  const token = bf.metadata.externalApiKey;
+
+  try {
+    const fetchRes = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({ action: 'update_status', data: { id, status } })
+    });
+
+    if (!fetchRes.ok) {
+      return res.status(fetchRes.status).json({ error: "Fehler beim Aktualisieren der externen Ressource." });
+    }
+
+    const responseData = await fetchRes.json();
+    res.json({ success: true, ...responseData });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/resources', async (req, res) => {
+  const business_id = (req as any).business_id;
+  const payload = { ...req.body, business_id };
+  const { data, error } = await supabaseAdmin.from('resources').insert(payload).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.put('/api/resources/:id', async (req, res) => {
+  const business_id = (req as any).business_id;
+  const { data, error } = await supabaseAdmin.from('resources')
+    .update(req.body)
+    .eq('id', req.params.id)
+    .eq('business_id', business_id)
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.delete('/api/resources/:id', async (req, res) => {
+  const business_id = (req as any).business_id;
+  const { error } = await supabaseAdmin.from('resources').delete().eq('id', req.params.id).eq('business_id', business_id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// --- APPOINTMENTS ---
+app.get('/api/appointments', async (req, res) => {
+  const business_id = (req as any).business_id;
+  const { data, error } = await supabaseAdmin.from('appointments').select('*').eq('business_id', business_id).order('start_time', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.post('/api/appointments', async (req, res) => {
+  const business_id = (req as any).business_id;
+  const payload = { ...req.body, business_id };
+  const { data, error } = await supabaseAdmin.from('appointments').insert(payload).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, appointment: data });
+});
+
+app.patch('/api/appointments/:id', async (req, res) => {
+  const business_id = (req as any).business_id;
+  const { data, error } = await supabaseAdmin.from('appointments')
+    .update(req.body)
+    .eq('id', req.params.id)
+    .eq('business_id', business_id)
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.delete('/api/appointments/:id', async (req, res) => {
+  const business_id = (req as any).business_id;
+  const { error } = await supabaseAdmin.from('appointments').delete().eq('id', req.params.id).eq('business_id', business_id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// --- RESOURCE TEMPLATES ---
+app.get('/api/resource-templates', async (req, res) => {
+  const { data, error } = await supabaseAdmin.from('resource_templates').select('*').order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.post('/api/resource-templates', async (req, res) => {
+  const { type, label, fields } = req.body;
+  if (!type || !label) return res.status(400).json({ error: "type and label are required" });
+  
+  const { data, error } = await supabaseAdmin.from('resource_templates').insert({ type, label, fields: fields || [] }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.put('/api/resource-templates/:id', async (req, res) => {
+  const { label, fields } = req.body;
+  const { data, error } = await supabaseAdmin.from('resource_templates')
+    .update({ label, fields })
+    .eq('id', req.params.id)
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.delete('/api/resource-templates/:id', async (req, res) => {
+  const { error } = await supabaseAdmin.from('resource_templates').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
 });
 
 // ==========================================
@@ -864,7 +1100,12 @@ app.post('/api/scrape-business', async (req, res) => {
     if (!url) return res.status(400).json({ error: 'URL is required' });
 
     // 1. Fetch website HTML
-    const fetchRes = await fetch(url);
+    const fetchRes = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8'
+      }
+    });
     const html = await fetchRes.text();
 
     // 2. Extract raw text using cheerio
@@ -938,9 +1179,10 @@ const getAiClient = () => {
 
 app.post('/api/voice/interact', async (req, res) => {
   try {
-    const { phoneNumber, userMessage, history, isFirstGreeting, hasSavedLead } = req.body;
+    const { phoneNumber, userMessage, history, isFirstGreeting, hasSavedLead, business_id: bodyBusinessId } = req.body;
 
-    const business_id = (req as any).business_id;
+    // Use body business_id if provided (e.g. from Twilio webhook), otherwise use auth token business_id
+    const business_id = bodyBusinessId || (req as any).business_id;
     // 1. Fetch Business Facts
     let businessFacts: any = { dealershipName: 'Autohaus Kaiserslautern' };
     const t0 = performance.now();
@@ -972,7 +1214,11 @@ app.post('/api/voice/interact', async (req, res) => {
         appointmentRules: bf?.metadata?.appointmentRules,
         knowledgeBase: bf?.metadata?.knowledgeBase,
         guardrailsPrompt: actualGuardrails,
-        permissions
+        permissions,
+        externalApiUrl: bf?.metadata?.externalApiUrl,
+        externalApiKey: bf?.metadata?.externalApiKey,
+        webhookUrl: bf?.metadata?.webhookUrl,
+        webhookSecret: bf?.metadata?.webhookSecret
       };
       
       let customScripts = { custom_nodes: [] };
@@ -1020,7 +1266,7 @@ app.post('/api/voice/interact', async (req, res) => {
       hasSavedLead,
       businessFacts,
       matchedCustomer,
-      (req as any).business_id
+      business_id
     );
 
     res.json(result);
@@ -1037,6 +1283,7 @@ app.post('/api/voice/interact', async (req, res) => {
 // In-memory stores
 const twilioCallSessions = new Map<string, any[]>();
 const twilioCallStates = new Map<string, { hasSavedLead: boolean }>();
+const twilioCallFillers = new Map<string, any[]>();
 const twilioAudioCache = new Map<string, Buffer>();
 
 // Initialize Twilio Client for Outbound calls
@@ -1108,6 +1355,21 @@ app.post('/api/twilio/incoming', validateTwilioRequest, async (req, res) => {
   try {
     const callSid = req.body.CallSid;
     const fromPhone = req.body.From;
+    const toPhone = req.body.To;
+
+    // Lookup business by Twilio number (check both To and From to support both inbound and outbound calls)
+    let business_id = undefined;
+    if (toPhone || fromPhone) {
+      const { data: bfData } = await supabaseAdmin
+        .from('business_facts')
+        .select('business_id, metadata');
+      
+      const match = bfData?.find(b => 
+        b.metadata?.twilioNumber === toPhone || b.metadata?.twilioNumber === toPhone?.replace('+', '00') ||
+        b.metadata?.twilioNumber === fromPhone || b.metadata?.twilioNumber === fromPhone?.replace('+', '00')
+      );
+      if (match) business_id = match.business_id;
+    }
 
     // Fetch initial greeting using the existing logic
     const interactRes = await fetch(`http://localhost:${PORT}/api/voice/interact`, {
@@ -1116,7 +1378,8 @@ app.post('/api/twilio/incoming', validateTwilioRequest, async (req, res) => {
       body: JSON.stringify({
         phoneNumber: fromPhone,
         isFirstGreeting: true,
-        history: []
+        history: [],
+        business_id
       })
     });
 
@@ -1139,6 +1402,7 @@ app.post('/api/twilio/incoming', validateTwilioRequest, async (req, res) => {
       { sender: 'assistant', text: greetingText, timestamp: new Date().toISOString() }
     ]);
     twilioCallStates.set(callSid, { hasSavedLead: false });
+    twilioCallFillers.set(callSid, interactData.fillers || []); // Store the custom fillers for this call
 
     const twiml = new VoiceResponse();
     // Play greeting
@@ -1186,11 +1450,78 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
 
     // Asynchronous Call Update Architecture
 
-    // 1. Instantly respond with a Filler Audio + Pause (so Twilio stays alive)
+    // 1. Instantly respond with a Smart Filler Audio + Pause (so Twilio stays alive)
+    const customFillers = twilioCallFillers.get(callSid) || [];
+    let fillerTextToPlay: string | null = null;
+    const speechLower = userSpeech.toLowerCase().trim();
+    
+    // Skip filler completely for short, direct answers that likely end a conversation or don't need heavy processing
+    if (speechLower === 'nein' || speechLower === 'nein danke' || speechLower === 'nein, danke' || speechLower === 'danke' || speechLower.includes('auf wiederhören') || speechLower.includes('tschüss')) {
+      fillerTextToPlay = null;
+    } else {
+      // Find a matching custom filler
+      let matchedFiller = customFillers.find((f: any) => {
+        if (!f.keywords) return false;
+        const keywords = f.keywords.split(',').map((k: string) => k.trim().toLowerCase());
+        // wildcard match for general waiting
+        if (keywords.includes('*')) return false; 
+        return keywords.some((k: string) => speechLower.includes(k));
+      });
+
+      // Fallback to wildcard or generic filler
+      if (!matchedFiller) {
+        matchedFiller = customFillers.find((f: any) => f.keywords?.trim() === '*');
+      }
+
+      if (matchedFiller && matchedFiller.variations && matchedFiller.variations.length > 0) {
+        // Pick random variation
+        fillerTextToPlay = matchedFiller.variations[Math.floor(Math.random() * matchedFiller.variations.length)];
+      } else {
+        // Ultimate fallback
+        fillerTextToPlay = 'Einen kleinen Moment bitte.';
+      }
+    }
+
+    let fillerAudioId: string | null = null;
+
+    if (fillerTextToPlay) {
+      const cacheKey = `${fillerTextToPlay}-${DEFAULT_VOICE_ID}`;
+      // Check if we already have TTS for this text
+      if (ttsCache.has(cacheKey)) {
+        const audioBuffer = ttsCache.get(cacheKey)!;
+        fillerAudioId = `dyn_${Date.now()}`;
+        twilioAudioCache.set(fillerAudioId, audioBuffer);
+      } else {
+        // Generate TTS on the fly!
+        try {
+          if (ttsClient) {
+            const request = {
+              input: { text: fillerTextToPlay },
+              voice: { languageCode: 'de-DE', name: DEFAULT_VOICE_ID },
+              audioConfig: { audioEncoding: 'MP3' as const, speakingRate: 1.10 }
+            };
+            const [response] = await ttsClient.synthesizeSpeech(request);
+            if (response.audioContent) {
+              const audioBuffer = Buffer.from(response.audioContent as Uint8Array);
+              ttsCache.set(cacheKey, audioBuffer); // cache globally
+              fillerAudioId = `dyn_${Date.now()}`;
+              twilioAudioCache.set(fillerAudioId, audioBuffer);
+            }
+          }
+        } catch (err) {
+          console.error("Failed to generate custom filler TTS on the fly:", err);
+          // Fallback to hardcoded
+          fillerAudioId = 'filler';
+        }
+      }
+    }
+
     const twiml = new VoiceResponse();
-    // Play filler WITHOUT <Gather> so it can't be interrupted immediately (prevents loops on background noise)
-    twiml.play('/api/twilio/audio/filler'); 
-    twiml.pause({ length: 15 }); // Wait up to 15 seconds for Gemini
+    // Play filler ONLY if we decided one is appropriate
+    if (fillerAudioId) {
+      twiml.play(`/api/twilio/audio/${fillerAudioId}`); 
+    }
+    twiml.pause({ length: 40 }); // Wait up to 40 seconds for Gemini and Webhooks
     res.type('text/xml');
     res.send(twiml.toString());
 
@@ -1204,6 +1535,19 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
         history.push({ sender: 'customer', text: userSpeech, timestamp: new Date().toISOString() });
 
         const callState = twilioCallStates.get(callSid) || { hasSavedLead: false };
+        const toPhone = req.body.To;
+      
+        let business_id = undefined;
+        if (toPhone || fromPhone) {
+          const { data: bfData } = await supabaseAdmin
+            .from('business_facts')
+            .select('business_id, metadata');
+          const match = bfData?.find(b => 
+            b.metadata?.twilioNumber === toPhone || b.metadata?.twilioNumber === toPhone?.replace('+', '00') ||
+            b.metadata?.twilioNumber === fromPhone || b.metadata?.twilioNumber === fromPhone?.replace('+', '00')
+          );
+          if (match) business_id = match.business_id;
+        }
 
         // Send to Gemini
         const interactRes = await fetch(`http://localhost:${PORT}/api/voice/interact`, {
@@ -1213,7 +1557,8 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
             phoneNumber: fromPhone,
             userMessage: userSpeech,
             history: history,
-            hasSavedLead: callState.hasSavedLead
+            hasSavedLead: callState.hasSavedLead,
+            business_id
           })
         });
 
@@ -1244,8 +1589,6 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
         
         if (assistantText.includes('Auf Wiederhören')) {
           updateTwiml.play(`${baseUrl}/api/twilio/audio/${audioId}`);
-          updateTwiml.pause({ length: 1 });
-          updateTwiml.hangup();
         } else {
           const gather = updateTwiml.gather({
             input: ['speech'],
@@ -1276,9 +1619,14 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
 app.get('/api/twilio/audio/:id', (req, res) => {
   const audioId = req.params.id;
   
-  if (audioId === 'filler') {
-    // Serve the pre-generated filler audio
-    const fillerKey = `Einen kleinen Moment bitte.-${DEFAULT_VOICE_ID}`;
+  if (audioId.startsWith('filler')) {
+    // Determine which pre-generated text to look for based on ID
+    let fillerText = 'Einen kleinen Moment bitte.';
+    if (audioId === 'filler_appointment') fillerText = 'Ich schaue kurz nach freien Terminen um.';
+    else if (audioId === 'filler_note') fillerText = 'Ich notiere mir das kurz.';
+    else if (audioId === 'filler_search') fillerText = 'Ich gucke mal kurz nach.';
+
+    const fillerKey = `${fillerText}-${DEFAULT_VOICE_ID}`;
     const fillerBuffer = ttsCache.get(fillerKey);
     if (fillerBuffer) {
       res.set('Content-Type', 'audio/mp3');

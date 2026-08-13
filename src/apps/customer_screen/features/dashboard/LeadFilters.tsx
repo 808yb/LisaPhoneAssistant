@@ -44,12 +44,12 @@ export const LeadFilters: React.FC<LeadFiltersProps> = ({
           onChange={(e) => setSelectedCategory(e.target.value)}
           className="bg-white border border-slate-200 text-slate-600 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-blue-400"
         >
-          <option value="all">Alle Abteilungen</option>
-          <option value="workshop">Werkstatt / Inspektion</option>
-          <option value="sales">Verkauf / Fahrzeuge</option>
-          <option value="test_drive">Probefahrt</option>
-          <option value="spare_parts">Ersatzteile & Reifen</option>
-          <option value="rental">Mietwagen</option>
+          <option value="all">Alle Kategorien</option>
+          <option value="service">Dienstleistung & Service</option>
+          <option value="sales">Verkauf & Produkte</option>
+          <option value="booking">Terminbuchung</option>
+          <option value="support">Support & Hilfe</option>
+          <option value="rental">Verleih & Miete</option>
           <option value="general">Sonstiges</option>
         </select>
 

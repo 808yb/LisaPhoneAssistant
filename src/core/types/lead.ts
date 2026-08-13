@@ -1,4 +1,4 @@
-export type LeadCategory = 'workshop' | 'sales' | 'test_drive' | 'spare_parts' | 'rental' | 'general';
+export type LeadCategory = 'service' | 'sales' | 'booking' | 'support' | 'rental' | 'general';
 export type LeadUrgency = 'high' | 'normal' | 'low';
 export type LeadStatus = 'new' | 'in_progress' | 'callback_scheduled' | 'completed';
 
@@ -16,7 +16,7 @@ export interface Lead {
   category: LeadCategory;
   concern: string;
   urgency: LeadUrgency;
-  vehicleInfo?: string;
+  additionalInfo?: string;
   preferredCallbackTime?: string;
   status: LeadStatus;
   notes?: string;

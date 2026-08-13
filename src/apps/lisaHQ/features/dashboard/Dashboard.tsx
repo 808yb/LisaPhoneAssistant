@@ -50,10 +50,10 @@ export const Dashboard: React.FC = () => {
   ];
 
   const activities = [
-    { business: 'BMW Kaiser', action: 'Termin gebucht', time: 'Gerade eben' },
+    { business: 'Unternehmen A', action: 'Termin gebucht', time: 'Gerade eben' },
     { business: 'Dental Müller', action: 'Wissensdatenbank aktualisiert', time: 'Vor 5 Min.' },
     { business: 'Hotel Adler', action: 'Lisa neu gestartet', time: 'Vor 12 Min.' },
-    { business: 'Autohaus Fischer', action: 'Neuer Kunde aufgenommen', time: 'Vor 1 Std.' }
+    { business: 'Demo Unternehmen', action: 'Neuer Kunde aufgenommen', time: 'Vor 1 Std.' }
   ];
 
   return (

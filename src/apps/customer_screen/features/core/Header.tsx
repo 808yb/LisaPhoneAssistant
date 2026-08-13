@@ -1,7 +1,7 @@
 import React from 'react';
-import { LayoutDashboard, Calendar, PhoneCall, Users, Building2, BarChart2, Settings, Phone } from 'lucide-react';
+import { LayoutDashboard, Calendar, PhoneCall, Users, Building2, BarChart2, Settings, Phone, Package } from 'lucide-react';
 
-export type TabType = 'dashboard' | 'calendar' | 'calls' | 'customers' | 'business' | 'analytics' | 'simulator';
+export type TabType = 'dashboard' | 'calendar' | 'calls' | 'customers' | 'business' | 'resources' | 'analytics' | 'simulator';
 
 interface HeaderProps {
   activeTab: TabType;
@@ -23,6 +23,7 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'calendar', label: 'Kalender', icon: Calendar, color: 'text-slate-500', activeColor: 'text-blue-700', activeBg: 'bg-blue-50 border-blue-200' },
     { id: 'calls', label: 'Anrufe', icon: PhoneCall, color: 'text-slate-500', activeColor: 'text-blue-700', activeBg: 'bg-blue-50 border-blue-200', count: unreadCallsCount },
     { id: 'customers', label: 'Kunden', icon: Users, color: 'text-slate-500', activeColor: 'text-blue-700', activeBg: 'bg-blue-50 border-blue-200' },
+    { id: 'resources', label: 'Ressourcen', icon: Package, color: 'text-slate-500', activeColor: 'text-blue-700', activeBg: 'bg-blue-50 border-blue-200' },
     { id: 'business', label: 'Geschäft', icon: Building2, color: 'text-slate-500', activeColor: 'text-blue-700', activeBg: 'bg-blue-50 border-blue-200' },
     { id: 'analytics', label: 'Analysen', icon: BarChart2, color: 'text-slate-500', activeColor: 'text-blue-700', activeBg: 'bg-blue-50 border-blue-200' },
     { id: 'simulator', label: 'Testanruf', icon: Phone, color: 'text-slate-500', activeColor: 'text-blue-700', activeBg: 'bg-blue-50 border-blue-200' },

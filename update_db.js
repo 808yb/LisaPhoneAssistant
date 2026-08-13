@@ -11,6 +11,6 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 async function update() {
   const { error } = await supabase.from('business_facts').update({ scripts: null }).eq('id', 1);
   if (error) console.error('Error updating:', error);
-  else console.log('Successfully wiped scripts for Autohaus Kaiserslautern, dashboard will use new defaults!');
+  else console.log('Successfully wiped scripts, dashboard will use new defaults!');
 }
 update();
