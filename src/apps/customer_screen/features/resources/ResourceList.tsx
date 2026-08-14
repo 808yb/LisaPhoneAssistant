@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, Search, Plus, Filter, Info, Trash2, Edit } from 'lucide-react';
+import { Package, Search, Plus, Filter, Info, Trash2, Edit, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Resource } from '../../../../core/types';
 import { ResourceModal } from './ResourceModal';
 import { supabase } from '../../../../core/supabaseClient';
@@ -16,6 +16,12 @@ export const ResourceList: React.FC<ResourceListProps> = ({ businessId }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingResource, setEditingResource] = useState<Resource | null>(null);
   const [externalApiUrl, setExternalApiUrl] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 12;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, filterType]);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -111,6 +117,9 @@ export const ResourceList: React.FC<ResourceListProps> = ({ businessId }) => {
     return true;
   });
 
+  const totalPages = Math.ceil(filteredResources.length / ITEMS_PER_PAGE);
+  const paginatedResources = filteredResources.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
   const uniqueTypes = Array.from(new Set(resources.map(r => r.type)));
 
   return (
@@ -186,65 +195,87 @@ export const ResourceList: React.FC<ResourceListProps> = ({ businessId }) => {
           Keine Ressourcen gefunden. Lege eine neue an.
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredResources.map(res => (
-            <div key={res.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-lg flex flex-col justify-between space-y-3 hover:border-slate-300 transition-all">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="font-semibold text-slate-900 text-sm">{res.name}</h3>
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mt-1">{res.type}</p>
+        <>
+          <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 content-start ${totalPages > 1 ? 'lg:min-h-[1088px] md:min-h-[1640px]' : ''}`}>
+            {paginatedResources.map(res => (
+              <div key={res.id} className="h-[260px] bg-white border border-slate-200 rounded-2xl p-5 shadow-lg flex flex-col space-y-3 hover:border-slate-300 transition-all">
+                <div className="flex justify-between items-start shrink-0">
+                  <div>
+                    <h3 className="font-semibold text-slate-900 text-sm">{res.name}</h3>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mt-1">{res.type}</p>
+                  </div>
+                  <select
+                    value={res.status}
+                    onChange={(e) => res.id && handleStatusChange(res.id, e.target.value)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border cursor-pointer focus:outline-none ${
+                      res.status === 'available' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 
+                      res.status === 'in_use' ? 'bg-amber-50 text-amber-600 border-amber-200' :
+                      'bg-slate-100 text-slate-600 border-slate-200'
+                    }`}
+                  >
+                    <option value="available">Verfügbar</option>
+                    <option value="in_use">In Nutzung / Gebucht</option>
+                    <option value="maintenance">Wartung / Defekt</option>
+                  </select>
                 </div>
-                <select
-                  value={res.status}
-                  onChange={(e) => res.id && handleStatusChange(res.id, e.target.value)}
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border cursor-pointer focus:outline-none ${
-                    res.status === 'available' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 
-                    res.status === 'in_use' ? 'bg-amber-50 text-amber-600 border-amber-200' :
-                    'bg-slate-100 text-slate-600 border-slate-200'
-                  }`}
-                >
-                  <option value="available">Verfügbar</option>
-                  <option value="in_use">In Nutzung / Gebucht</option>
-                  <option value="maintenance">Wartung / Defekt</option>
-                </select>
-              </div>
-              
-              <div className="bg-slate-50 rounded-xl border border-slate-200 p-3 space-y-1">
-                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Details (JSON Metadata)</div>
-                {Object.keys(res.metadata || {}).length === 0 ? (
-                  <p className="text-[11px] text-slate-400 italic">Keine Zusatzfelder definiert.</p>
-                ) : (
-                  Object.entries(res.metadata).map(([key, value]) => (
-                    <div key={key} className="flex justify-between text-[11px]">
-                      <span className="text-slate-500">{key}:</span>
-                      <span className="text-slate-800 font-medium truncate ml-2 max-w-[120px]">{String(value)}</span>
-                    </div>
-                  ))
+                
+                <div className="flex-1 bg-slate-50 rounded-xl border border-slate-200 p-3 space-y-1 overflow-y-auto min-h-0">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 sticky top-0 bg-slate-50 pb-1">Details (JSON)</div>
+                  {Object.keys(res.metadata || {}).length === 0 ? (
+                    <p className="text-[11px] text-slate-400 italic">Keine Zusatzfelder definiert.</p>
+                  ) : (
+                    Object.entries(res.metadata).map(([key, value]) => (
+                      <div key={key} className="flex justify-between text-[11px]">
+                        <span className="text-slate-500">{key}:</span>
+                        <span className="text-slate-800 font-medium truncate ml-2 max-w-[120px]">{String(value)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {!externalApiUrl && (
+                  <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100 shrink-0 mt-auto">
+                  <button 
+                    onClick={() => {
+                      setEditingResource(res);
+                      setIsModalOpen(true);
+                    }}
+                    className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  >
+                    <Edit className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => res.id && handleDelete(res.id)}
+                    className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
                 )}
               </div>
+            ))}
+          </div>
 
-              {!externalApiUrl && (
-                <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
-                <button 
-                  onClick={() => {
-                    setEditingResource(res);
-                    setIsModalOpen(true);
-                  }}
-                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                >
-                  <Edit className="w-4 h-4" />
-                </button>
-                <button 
-                  onClick={() => res.id && handleDelete(res.id)}
-                  className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-              )}
-            </div>
-          ))}
-        </div>
+          <div className="flex justify-between items-center mt-6 pt-6 border-t border-slate-200">
+            <button 
+              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+              disabled={currentPage === 1}
+              className="flex items-center space-x-1 px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span>Zurück</span>
+            </button>
+            <span className="text-sm font-medium text-slate-600">Seite {currentPage} von {totalPages || 1}</span>
+            <button 
+              onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+              disabled={currentPage === totalPages || totalPages === 0}
+              className="flex items-center space-x-1 px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span>Weiter</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </>
       )}
 
       {isModalOpen && (

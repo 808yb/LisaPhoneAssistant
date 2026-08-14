@@ -53,8 +53,7 @@ export const bookAppointmentFunctionDeclaration: FunctionDeclaration = {
       startTime: { type: Type.STRING, description: "Startzeitpunkt als ISO-String mit Zeitzonen-Offset (z.B. '2023-11-20T10:00:00+02:00')" },
       endTime: { type: Type.STRING, description: "Endzeitpunkt als ISO-String mit Zeitzonen-Offset (z.B. '2023-11-20T11:00:00+02:00')" },
       notes: { type: Type.STRING, description: "Optionale Details zum Termin" },
-      resourceId: { type: Type.NUMBER, description: "Optional: Die ID der zu buchenden Ressource (aus check_available_resources), falls zutreffend." },
-      resourceName: { type: Type.STRING, description: "Optional: Der genaue Name der zu buchenden Ressource (aus dem Chatverlauf), falls du die ID nicht parat hast." }
+      resourceId: { type: Type.STRING, description: "Optional: Die eindeutige ID der zu buchenden Ressource (aus check_available_resources, z.B. UUID oder Nummer als String), falls zutreffend." }
     },
     required: ["callerName", "title", "startTime", "endTime"]
   }

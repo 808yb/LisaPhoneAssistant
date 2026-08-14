@@ -52,14 +52,14 @@ app.use(async (req, res, next) => {
   // 1. Check if it's a Twilio request (webhook)
   const isTwilioRoute = req.path.startsWith('/api/twilio/') || req.path.startsWith('/api/voice/');
   const twilioNumber = req.body?.To || req.query?.To;
-  
+
   if (isTwilioRoute && twilioNumber) {
     const { data: business } = await supabaseAdmin
       .from('businesses')
       .select('id')
       .eq('twilio_phone_number', twilioNumber)
       .single();
-      
+
     if (business) {
       (req as any).business_id = business.id;
     }
@@ -71,12 +71,12 @@ app.use(async (req, res, next) => {
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.split(' ')[1];
     const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
-    
+
     if (user && !error) {
       (req as any).user = user;
-      
+
       // console.log(`[Auth] User ${user.email} authenticated`);
-      
+
       // Check if superadmin
       const { data: admin } = await supabaseAdmin.from('lisahq_admins').select('id').eq('email', user.email).maybeSingle();
       if (admin) {
@@ -84,7 +84,7 @@ app.use(async (req, res, next) => {
         (req as any).is_superadmin = true;
         return next();
       }
-      
+
       // Check if business user
       const { data: bizUser } = await supabaseAdmin.from('business_users').select('business_id').eq('user_id', user.id).maybeSingle();
       if (bizUser) {
@@ -211,7 +211,7 @@ app.get('/api/admin/scripts/:businessId', async (req, res) => {
   if (error && error.code !== 'PGRST116') {
     return res.status(500).json({ error: error.message });
   }
-  
+
   // Default structure if not found or invalid JSON
   let scriptObj = {
     core_greeting: ['Hallo, willkommen!'],
@@ -236,17 +236,17 @@ app.post('/api/admin/scripts/:businessId', async (req, res) => {
   if (!is_superadmin) return res.status(403).json({ error: 'Forbidden' });
 
   const scriptObj = req.body;
-  
+
   // Upsert the new script to business_facts
   const { error } = await supabaseAdmin
     .from('business_facts')
-    .upsert({ 
+    .upsert({
       business_id: req.params.businessId,
       ai_prompt_instructions: JSON.stringify(scriptObj)
     }, { onConflict: 'business_id' });
 
   if (error) return res.status(500).json({ error: error.message });
-  
+
   // Trigger TTS pregeneration in the background (we will implement this function next)
   pregenerateCustomScriptAudio(scriptObj, DEFAULT_VOICE_ID).catch(e => console.error("Pregeneration error:", e));
 
@@ -289,7 +289,7 @@ app.post('/api/admin/global-scripts', async (req, res) => {
 
   const globalScripts = req.body;
   const globalScriptsFile = path.join(process.cwd(), 'global_scripts.json');
-  
+
   fs.writeFileSync(globalScriptsFile, JSON.stringify(globalScripts, null, 2));
 
   // Trigger TTS pregeneration for ALL businesses
@@ -477,7 +477,7 @@ app.get('/api/leads', async (req, res) => {
 
   const { data, error } = await supabaseAdmin.from('leads').select('*').eq('business_id', business_id).order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
-  
+
   const mappedData = data.map((d: any) => ({
     ...d,
     callerName: d.name, // the db uses "name", front expects "callerName"
@@ -580,13 +580,13 @@ app.get('/api/business-facts', async (req, res) => {
 
   let actualGuardrails = data.metadata?.guardrailsPrompt || '';
   let perms = { mentionPrices: false, mentionEmployees: true, bookAppointments: true, technicalAdvice: false };
-  
+
   if (actualGuardrails.includes('|||PERMISSIONS|||')) {
     const parts = actualGuardrails.split('|||PERMISSIONS|||');
     actualGuardrails = parts[0];
     try {
       perms = JSON.parse(parts[1]);
-    } catch (e) {}
+    } catch (e) { }
   }
 
   res.json({
@@ -615,7 +615,7 @@ app.get('/api/business-facts', async (req, res) => {
 
 app.post('/api/business-facts', async (req, res) => {
   const business_id = (req as any).business_id;
-  
+
   // Package everything into the metadata object
   const metadata = {
     businessName: req.body.businessName,
@@ -659,7 +659,7 @@ app.get('/api/resources', async (req, res) => {
 
 app.get('/api/external-resources', async (req, res) => {
   const business_id = (req as any).business_id;
-  
+
   // 1. Fetch business facts to get the external API URL and token
   const { data: bf, error } = await supabaseAdmin
     .from('business_facts')
@@ -699,7 +699,7 @@ app.get('/api/external-resources', async (req, res) => {
 app.post('/api/external-resources/update', async (req, res) => {
   const business_id = (req as any).business_id;
   const { id, status } = req.body;
-  
+
   const { data: bf, error } = await supabaseAdmin
     .from('business_facts')
     .select('metadata')
@@ -763,7 +763,7 @@ app.delete('/api/resources/:id', async (req, res) => {
 // --- APPOINTMENTS ---
 app.get('/api/appointments', async (req, res) => {
   const business_id = (req as any).business_id;
-  const { data, error } = await supabaseAdmin.from('appointments').select('*').eq('business_id', business_id).order('start_time', { ascending: true });
+  const { data, error } = await supabaseAdmin.from('appointments').select('*, customer:customers(name, phone)').eq('business_id', business_id).order('start_time', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -804,7 +804,7 @@ app.get('/api/resource-templates', async (req, res) => {
 app.post('/api/resource-templates', async (req, res) => {
   const { type, label, fields } = req.body;
   if (!type || !label) return res.status(400).json({ error: "type and label are required" });
-  
+
   const { data, error } = await supabaseAdmin.from('resource_templates').insert({ type, label, fields: fields || [] }).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -856,14 +856,14 @@ if (!fs.existsSync(AUDIO_CACHE_DIR)) {
 
 async function pregenerateCustomScriptAudio(scriptObj: any, voiceId: string) {
   console.log(`Pre-generating custom script audio for voice: ${voiceId}`);
-  
+
   // Extract all text strings from the scriptObj
   const textsToGenerate: { tag: string, text: string }[] = [];
-  
+
   if (scriptObj.core_greeting) scriptObj.core_greeting.forEach((t: string, i: number) => textsToGenerate.push({ tag: `greeting_${i}`, text: t }));
   if (scriptObj.core_ai_disclosure) scriptObj.core_ai_disclosure.forEach((t: string, i: number) => textsToGenerate.push({ tag: `disclosure_${i}`, text: t }));
   if (scriptObj.core_farewell) scriptObj.core_farewell.forEach((t: string, i: number) => textsToGenerate.push({ tag: `farewell_${i}`, text: t }));
-  
+
   if (scriptObj.custom_nodes && Array.isArray(scriptObj.custom_nodes)) {
     scriptObj.custom_nodes.forEach((node: any, nIdx: number) => {
       if (node.texts && Array.isArray(node.texts)) {
@@ -874,10 +874,20 @@ async function pregenerateCustomScriptAudio(scriptObj: any, voiceId: string) {
     });
   }
 
+  if (scriptObj.fillers && Array.isArray(scriptObj.fillers)) {
+    scriptObj.fillers.forEach((f: any, fIdx: number) => {
+      if (f.texts && Array.isArray(f.texts)) {
+        f.texts.forEach((t: string, tIdx: number) => {
+          textsToGenerate.push({ tag: `filler_${fIdx}_${tIdx}`, text: t });
+        });
+      }
+    });
+  }
+
   for (const item of textsToGenerate) {
     const text = item.text.trim();
     if (!text) continue;
-    
+
     const cacheKey = `${text}-${voiceId}`;
     if (!ttsCache.has(cacheKey)) {
       const safeTag = item.tag.replace(/[^a-zA-Z0-9_]/g, '');
@@ -893,8 +903,8 @@ async function pregenerateCustomScriptAudio(scriptObj: any, voiceId: string) {
           const request = {
             input: { text: text + ' ...' },
             voice: { languageCode: 'de-DE', name: voiceId },
-            audioConfig: { 
-              audioEncoding: 'MP3' as const, 
+            audioConfig: {
+              audioEncoding: 'MP3' as const,
               ...(voiceId.includes('Journey') ? {} : { speakingRate: 1.10 })
             }
           };
@@ -934,8 +944,8 @@ async function pregenerateScriptAudio(voiceId: string) {
           const request = {
             input: { text: text },
             voice: { languageCode: 'de-DE', name: voiceId },
-            audioConfig: { 
-              audioEncoding: 'MP3' as const, 
+            audioConfig: {
+              audioEncoding: 'MP3' as const,
               ...(voiceId.includes('Journey') ? {} : { speakingRate: 1.10 })
             }
           };
@@ -955,6 +965,18 @@ async function pregenerateScriptAudio(voiceId: string) {
 
 // Trigger pre-generation for default voice on startup
 pregenerateScriptAudio(DEFAULT_VOICE_ID);
+
+(async () => {
+  try {
+    const globalScriptsPath = path.join(process.cwd(), 'global_scripts.json');
+    if (fs.existsSync(globalScriptsPath)) {
+      const globalScripts = JSON.parse(fs.readFileSync(globalScriptsPath, 'utf8'));
+      await pregenerateCustomScriptAudio(globalScripts, DEFAULT_VOICE_ID);
+    }
+  } catch (e) {
+    console.error("Failed to pregenerate global scripts on startup:", e);
+  }
+})();
 
 app.get('/api/voice/voices', async (req, res) => {
   try {
@@ -1076,7 +1098,7 @@ app.put('/api/businesses/:id/scripts', async (req, res) => {
 
   const { id } = req.params;
   const { scripts } = req.body;
-  
+
   // Save as JSON string in ai_prompt_instructions for now (or a new column)
   const { error } = await supabaseAdmin.from('business_facts')
     .update({ ai_prompt_instructions: JSON.stringify(scripts) })
@@ -1117,9 +1139,9 @@ app.post('/api/scrape-business', async (req, res) => {
     // 3. Ask Gemini to extract structured JSON
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error('GEMINI_API_KEY environment variable is not configured.');
-    
+
     const ai = new GoogleGenAI({ apiKey, httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } });
-    
+
     const prompt = `Du bist ein intelligenter Daten-Extraktor. Analysiere den folgenden Text von der Unternehmens-Webseite und extrahiere die relevanten Informationen für ein CRM/KI-System.
 Gib das Ergebnis **ausschließlich** als gültiges JSON-Objekt zurück. Verwende dieses exakte Schema:
 {
@@ -1158,7 +1180,7 @@ ${rawText}
 
     const jsonText = response.text;
     if (!jsonText) throw new Error("No response from AI");
-    
+
     const parsedData = JSON.parse(jsonText);
     res.json({ success: true, data: parsedData });
   } catch (error: any) {
@@ -1188,15 +1210,15 @@ app.post('/api/voice/interact', async (req, res) => {
     const t0 = performance.now();
     const { data: bf } = await supabaseAdmin.from('business_facts').select('*').eq('business_id', business_id).single();
     const { data: biz } = await supabaseAdmin.from('businesses').select('name').eq('id', business_id).single();
-    
+
     if (bf || biz) {
       let actualGuardrails = bf?.metadata?.guardrailsPrompt || '';
       let permissions = { mentionPrices: false, mentionEmployees: true, bookAppointments: true, technicalAdvice: false };
-      
+
       if (actualGuardrails.includes('|||PERMISSIONS|||')) {
         const parts = actualGuardrails.split('|||PERMISSIONS|||');
         actualGuardrails = parts[0];
-        try { permissions = JSON.parse(parts[1]); } catch (e) {}
+        try { permissions = JSON.parse(parts[1]); } catch (e) { }
       }
 
       businessFacts = {
@@ -1220,13 +1242,13 @@ app.post('/api/voice/interact', async (req, res) => {
         webhookUrl: bf?.metadata?.webhookUrl,
         webhookSecret: bf?.metadata?.webhookSecret
       };
-      
+
       let customScripts = { custom_nodes: [] };
       try {
         if (bf?.ai_prompt_instructions) {
           customScripts = JSON.parse(bf.ai_prompt_instructions);
         }
-      } catch (e) {}
+      } catch (e) { }
 
       let globalScripts: any = {};
       try {
@@ -1234,7 +1256,7 @@ app.post('/api/voice/interact', async (req, res) => {
         if (fs.existsSync(p)) {
           globalScripts = JSON.parse(fs.readFileSync(p, 'utf8'));
         }
-      } catch(e) {}
+      } catch (e) { }
 
       // Resolve {business_name} placeholders in global scripts
       const name = biz?.name || 'unserem Unternehmen';
@@ -1331,7 +1353,7 @@ const validateTwilioRequest = (req: express.Request, res: express.Response, next
 
   const twilioSignature = req.headers['x-twilio-signature'] as string;
   const authToken = process.env.TWILIO_AUTH_TOKEN || '';
-  
+
   if (!twilioSignature || !authToken) {
     return res.status(403).send('Forbidden: Missing Twilio Signature or Auth Token');
   }
@@ -1340,9 +1362,9 @@ const validateTwilioRequest = (req: express.Request, res: express.Response, next
   const protocol = req.headers['x-forwarded-proto'] || req.protocol;
   const host = req.headers['x-forwarded-host'] || req.headers.host;
   const url = `${protocol}://${host}${req.originalUrl}`;
-  
+
   const isValid = twilio.validateRequest(authToken, twilioSignature, url, req.body);
-  
+
   if (isValid) {
     next();
   } else {
@@ -1363,8 +1385,8 @@ app.post('/api/twilio/incoming', validateTwilioRequest, async (req, res) => {
       const { data: bfData } = await supabaseAdmin
         .from('business_facts')
         .select('business_id, metadata');
-      
-      const match = bfData?.find(b => 
+
+      const match = bfData?.find(b =>
         b.metadata?.twilioNumber === toPhone || b.metadata?.twilioNumber === toPhone?.replace('+', '00') ||
         b.metadata?.twilioNumber === fromPhone || b.metadata?.twilioNumber === fromPhone?.replace('+', '00')
       );
@@ -1454,9 +1476,10 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
     const customFillers = twilioCallFillers.get(callSid) || [];
     let fillerTextToPlay: string | null = null;
     const speechLower = userSpeech.toLowerCase().trim();
-    
-    // Skip filler completely for short, direct answers that likely end a conversation or don't need heavy processing
-    if (speechLower === 'nein' || speechLower === 'nein danke' || speechLower === 'nein, danke' || speechLower === 'danke' || speechLower.includes('auf wiederhören') || speechLower.includes('tschüss')) {
+
+    // Skip filler completely for short, direct answers that likely end a conversation
+    const isFarewellOrNo = /\b(nein|nee|nö|passt|danke|tschüss|ciao|wiederhören|wiedersehen)\b/i.test(speechLower) && speechLower.length < 40;
+    if (isFarewellOrNo) {
       fillerTextToPlay = null;
     } else {
       // Find a matching custom filler
@@ -1464,7 +1487,7 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
         if (!f.keywords) return false;
         const keywords = f.keywords.split(',').map((k: string) => k.trim().toLowerCase());
         // wildcard match for general waiting
-        if (keywords.includes('*')) return false; 
+        if (keywords.includes('*')) return false;
         return keywords.some((k: string) => speechLower.includes(k));
       });
 
@@ -1473,55 +1496,28 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
         matchedFiller = customFillers.find((f: any) => f.keywords?.trim() === '*');
       }
 
-      if (matchedFiller && matchedFiller.variations && matchedFiller.variations.length > 0) {
+      const variations = matchedFiller?.texts || matchedFiller?.variations;
+      if (variations && variations.length > 0) {
         // Pick random variation
-        fillerTextToPlay = matchedFiller.variations[Math.floor(Math.random() * matchedFiller.variations.length)];
+        fillerTextToPlay = variations[Math.floor(Math.random() * variations.length)];
       } else {
         // Ultimate fallback
         fillerTextToPlay = 'Einen kleinen Moment bitte.';
       }
     }
 
-    let fillerAudioId: string | null = null;
-
-    if (fillerTextToPlay) {
-      const cacheKey = `${fillerTextToPlay}-${DEFAULT_VOICE_ID}`;
-      // Check if we already have TTS for this text
-      if (ttsCache.has(cacheKey)) {
-        const audioBuffer = ttsCache.get(cacheKey)!;
-        fillerAudioId = `dyn_${Date.now()}`;
-        twilioAudioCache.set(fillerAudioId, audioBuffer);
-      } else {
-        // Generate TTS on the fly!
-        try {
-          if (ttsClient) {
-            const request = {
-              input: { text: fillerTextToPlay },
-              voice: { languageCode: 'de-DE', name: DEFAULT_VOICE_ID },
-              audioConfig: { audioEncoding: 'MP3' as const, speakingRate: 1.10 }
-            };
-            const [response] = await ttsClient.synthesizeSpeech(request);
-            if (response.audioContent) {
-              const audioBuffer = Buffer.from(response.audioContent as Uint8Array);
-              ttsCache.set(cacheKey, audioBuffer); // cache globally
-              fillerAudioId = `dyn_${Date.now()}`;
-              twilioAudioCache.set(fillerAudioId, audioBuffer);
-            }
-          }
-        } catch (err) {
-          console.error("Failed to generate custom filler TTS on the fly:", err);
-          // Fallback to hardcoded
-          fillerAudioId = 'filler';
-        }
-      }
-    }
-
     const twiml = new VoiceResponse();
+
     // Play filler ONLY if we decided one is appropriate
-    if (fillerAudioId) {
-      twiml.play(`/api/twilio/audio/${fillerAudioId}`); 
+    if (fillerTextToPlay) {
+      const b64SmartFiller = Buffer.from(fillerTextToPlay).toString('base64');
+      twiml.play(`/api/twilio/audio/b64_${b64SmartFiller}`);
+      
+      twiml.pause({ length: 35 });
+    } else {
+      twiml.pause({ length: 40 }); // Wait up to 40 seconds for Gemini and Webhooks
     }
-    twiml.pause({ length: 40 }); // Wait up to 40 seconds for Gemini and Webhooks
+
     res.type('text/xml');
     res.send(twiml.toString());
 
@@ -1536,13 +1532,13 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
 
         const callState = twilioCallStates.get(callSid) || { hasSavedLead: false };
         const toPhone = req.body.To;
-      
+
         let business_id = undefined;
         if (toPhone || fromPhone) {
           const { data: bfData } = await supabaseAdmin
             .from('business_facts')
             .select('business_id, metadata');
-          const match = bfData?.find(b => 
+          const match = bfData?.find(b =>
             b.metadata?.twilioNumber === toPhone || b.metadata?.twilioNumber === toPhone?.replace('+', '00') ||
             b.metadata?.twilioNumber === fromPhone || b.metadata?.twilioNumber === fromPhone?.replace('+', '00')
           );
@@ -1564,7 +1560,7 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
 
         const interactData = await interactRes.json();
         const assistantText = interactData.text || "Ich habe Sie leider nicht verstanden.";
-        
+
         if (interactData.savedLeadData) {
           callState.hasSavedLead = true;
           twilioCallStates.set(callSid, callState);
@@ -1586,7 +1582,7 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
 
         // 3. Update the Live Call with the new Audio
         const updateTwiml = new VoiceResponse();
-        
+
         if (assistantText.includes('Auf Wiederhören')) {
           updateTwiml.play(`${baseUrl}/api/twilio/audio/${audioId}`);
         } else {
@@ -1618,8 +1614,24 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
 
 app.get('/api/twilio/audio/:id', (req, res) => {
   const audioId = req.params.id;
-  
-  if (audioId.startsWith('filler')) {
+
+  if (audioId.startsWith('b64_')) {
+    try {
+      const base64Text = audioId.replace('b64_', '').replace(/\.mp3$/, '');
+      const decodedText = Buffer.from(base64Text, 'base64').toString('utf8');
+      const cacheKey = `${decodedText}-${DEFAULT_VOICE_ID}`;
+      
+      const buffer = ttsCache.get(cacheKey);
+      if (buffer) {
+        res.set('Content-Type', 'audio/mp3');
+        return res.send(buffer);
+      } else {
+        console.warn(`Audio not found in ttsCache for decoded text: "${decodedText}"`);
+      }
+    } catch (e) {
+      console.error("Failed to decode base64 audio id:", e);
+    }
+  } else if (audioId.startsWith('filler')) {
     // Determine which pre-generated text to look for based on ID
     let fillerText = 'Einen kleinen Moment bitte.';
     if (audioId === 'filler_appointment') fillerText = 'Ich schaue kurz nach freien Terminen um.';

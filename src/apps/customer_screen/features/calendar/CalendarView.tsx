@@ -36,13 +36,16 @@ export const CalendarView: React.FC = () => {
   };
 
   const events = useMemo(() => {
-    return appointments.map(appt => ({
-      id: appt.id,
-      title: appt.title,
-      start: new Date(appt.start_time),
-      end: new Date(appt.end_time),
-      resource: appt,
-    }));
+    return appointments.map(appt => {
+      const customerName = appt.customer?.name ? ` - ${appt.customer.name}` : '';
+      return {
+        id: appt.id,
+        title: `${appt.title}${customerName}`,
+        start: new Date(appt.start_time),
+        end: new Date(appt.end_time),
+        resource: appt,
+      };
+    });
   }, [appointments]);
 
   const handleSelectSlot = async ({ start, end }: { start: Date; end: Date }) => {
@@ -221,7 +224,7 @@ export const CalendarView: React.FC = () => {
             <div className="p-6 space-y-4">
               <div>
                 <p className="text-sm text-slate-500 mb-1">Titel</p>
-                <p className="font-medium text-slate-900">{selectedEvent.title}</p>
+                <p className="font-medium text-slate-900">{selectedEvent.resource?.title || selectedEvent.title}</p>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -233,6 +236,18 @@ export const CalendarView: React.FC = () => {
                   <p className="font-medium text-slate-900">{format(selectedEvent.end, 'dd.MM.yyyy HH:mm')}</p>
                 </div>
               </div>
+              {selectedEvent.resource?.customer && (
+                <div className="grid grid-cols-2 gap-4 border-t border-slate-100 pt-4 mt-4">
+                  <div>
+                    <p className="text-sm text-slate-500 mb-1">Kunde</p>
+                    <p className="font-medium text-slate-900">{selectedEvent.resource.customer.name}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-500 mb-1">Telefon</p>
+                    <p className="font-medium text-slate-900">{selectedEvent.resource.customer.phone || '-'}</p>
+                  </div>
+                </div>
+              )}
               {selectedEvent.resource?.notes && (
                 <div>
                   <p className="text-sm text-slate-500 mb-1">Notizen</p>

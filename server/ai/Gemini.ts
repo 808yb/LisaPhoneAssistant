@@ -375,19 +375,6 @@ export class GeminiService {
                   .update({ status: 'in_use' })
                   .eq('id', args.resourceId)
                   .eq('business_id', business_id);
-              } else if (args.resourceName) {
-                const { data: res } = await this.supabase.from('resources')
-                  .select('id')
-                  .ilike('name', `%${args.resourceName}%`)
-                  .eq('business_id', business_id)
-                  .eq('status', 'available')
-                  .limit(1);
-                if (res && res.length > 0) {
-                  await this.supabase.from('resources')
-                    .update({ status: 'in_use' })
-                    .eq('id', res[0].id)
-                    .eq('business_id', business_id);
-                }
               }
 
               // Also create a Lead so the call shows up in the Anrufhistorie
