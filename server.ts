@@ -106,7 +106,6 @@ app.use(async (req, res, next) => {
   // List of public API endpoints that don't require JWT authentication
   const publicApiRoutes = [
     '/api/metrics',
-    '/api/twilio/call',
     '/api/twilio/incoming',
     '/api/twilio/respond',
     '/api/twilio/audio',
@@ -549,6 +548,8 @@ app.delete('/api/leads/:id', async (req, res) => {
 app.get('/api/business-facts', async (req, res) => {
   const business_id = (req as any).business_id;
   const { data, error } = await supabaseAdmin.from('business_facts').select('*').eq('business_id', business_id).single();
+  const { data: secrets } = await supabaseAdmin.from('business_secrets').select('*').eq('business_id', business_id).single();
+
   if (error || !data) {
     return res.json({
       businessName: 'Beispielunternehmen',
@@ -579,6 +580,13 @@ app.get('/api/business-facts', async (req, res) => {
     });
   }
 
+  // Auto-migration check: If secret doesn't exist in business_secrets yet, check the old metadata blob
+  let apiKeyExists = !!secrets?.external_api_key;
+  if (!apiKeyExists && data.metadata?.externalApiKey) apiKeyExists = true;
+
+  let webhookExists = !!secrets?.webhook_secret;
+  if (!webhookExists && data.metadata?.webhookSecret) webhookExists = true;
+
   let actualGuardrails = data.metadata?.guardrailsPrompt || '';
   let perms = { mentionPrices: false, mentionEmployees: true, bookAppointments: true, technicalAdvice: false };
 
@@ -608,16 +616,42 @@ app.get('/api/business-facts', async (req, res) => {
     knowledgeBase: data.metadata?.knowledgeBase || '',
     permissions: perms,
     externalApiUrl: data.metadata?.externalApiUrl || '',
-    externalApiKey: data.metadata?.externalApiKey || '',
+    externalApiKey: apiKeyExists ? '********' : '',
     webhookUrl: data.metadata?.webhookUrl || '',
-    webhookSecret: data.metadata?.webhookSecret || ''
+    webhookSecret: webhookExists ? '********' : ''
   });
 });
 
 app.post('/api/business-facts', async (req, res) => {
   const business_id = (req as any).business_id;
 
-  // Package everything into the metadata object
+  // Fetch existing to preserve secrets if they weren't changed
+  const { data: existingData } = await supabaseAdmin.from('business_facts').select('metadata').eq('business_id', business_id).single();
+  const existingMetadata = existingData?.metadata || {};
+  
+  const { data: existingSecrets } = await supabaseAdmin.from('business_secrets').select('*').eq('business_id', business_id).single();
+
+  let apiKeyToSave = req.body.externalApiKey;
+  if (apiKeyToSave === '********') {
+    apiKeyToSave = existingSecrets?.external_api_key || existingMetadata.externalApiKey;
+  }
+  
+  let webhookSecretToSave = req.body.webhookSecret;
+  if (webhookSecretToSave === '********') {
+    webhookSecretToSave = existingSecrets?.webhook_secret || existingMetadata.webhookSecret;
+  }
+
+  // Upsert the secrets into the new secure table
+  if (apiKeyToSave !== undefined || webhookSecretToSave !== undefined) {
+    await supabaseAdmin.from('business_secrets').upsert({
+      business_id,
+      external_api_key: apiKeyToSave || null,
+      webhook_secret: webhookSecretToSave || null,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'business_id' });
+  }
+
+  // Package everything into the metadata object (EXCLUDING secrets!)
   const metadata = {
     businessName: req.body.businessName,
     address: req.body.address,
@@ -635,9 +669,7 @@ app.post('/api/business-facts', async (req, res) => {
     appointmentRules: req.body.appointmentRules,
     knowledgeBase: req.body.knowledgeBase,
     externalApiUrl: req.body.externalApiUrl,
-    externalApiKey: req.body.externalApiKey,
-    webhookUrl: req.body.webhookUrl,
-    webhookSecret: req.body.webhookSecret
+    webhookUrl: req.body.webhookUrl
   };
 
   const payload = {
@@ -1221,6 +1253,7 @@ export async function processVoiceInteractionCore(params: {
   const t0 = performance.now();
   const { data: bf } = await supabaseAdmin.from('business_facts').select('*').eq('business_id', business_id).single();
   const { data: biz } = await supabaseAdmin.from('businesses').select('name').eq('id', business_id).single();
+  const { data: secrets } = await supabaseAdmin.from('business_secrets').select('*').eq('business_id', business_id).single();
 
   if (bf || biz) {
     let actualGuardrails = bf?.metadata?.guardrailsPrompt || '';
@@ -1231,6 +1264,10 @@ export async function processVoiceInteractionCore(params: {
       actualGuardrails = parts[0];
       try { permissions = JSON.parse(parts[1]); } catch (e) { }
     }
+
+    // Auto-migration fallback for existing data
+    const externalApiKey = secrets?.external_api_key || bf?.metadata?.externalApiKey;
+    const webhookSecret = secrets?.webhook_secret || bf?.metadata?.webhookSecret;
 
     businessFacts = {
       businessName: bf?.metadata?.businessName || biz?.name,
@@ -1249,9 +1286,9 @@ export async function processVoiceInteractionCore(params: {
       guardrailsPrompt: actualGuardrails,
       permissions,
       externalApiUrl: bf?.metadata?.externalApiUrl,
-      externalApiKey: bf?.metadata?.externalApiKey,
+      externalApiKey,
       webhookUrl: bf?.metadata?.webhookUrl,
-      webhookSecret: bf?.metadata?.webhookSecret
+      webhookSecret
     };
 
     let customScripts = { custom_nodes: [] };
@@ -1355,12 +1392,47 @@ if (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET && proce
   twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 }
 
+const twilioRateLimits = new LRUCache<string, number[]>({ max: 500, ttl: 1000 * 60 });
+
 app.post('/api/twilio/call', async (req, res) => {
   try {
+    const business_id = (req as any).business_id;
+    if (!business_id) {
+      return res.status(401).json({ error: 'Unauthorized. Business ID required.' });
+    }
+
     const { toPhone, ngrokUrl } = req.body;
     if (!toPhone || !ngrokUrl) {
       return res.status(400).json({ error: 'toPhone and ngrokUrl are required' });
     }
+
+    // Rate Limiting: Max 3 calls per minute per business
+    const now = Date.now();
+    const calls = twilioRateLimits.get(business_id) || [];
+    const recentCalls = calls.filter(time => now - time < 60000);
+    if (recentCalls.length >= 3) {
+      return res.status(429).json({ error: 'Rate limit exceeded. Maximum 3 calls per minute.' });
+    }
+    recentCalls.push(now);
+    twilioRateLimits.set(business_id, recentCalls);
+
+    // Destination Restriction: Must be +49 OR an existing lead/customer for this business
+    let isAllowedDestination = false;
+    if (toPhone.startsWith('+49') && !toPhone.match(/^\+49(900|137|138|0900)/)) {
+      isAllowedDestination = true;
+    } else {
+      // Check if it's an existing lead or customer
+      const { data: lead } = await supabaseAdmin.from('leads').select('id').eq('business_id', business_id).eq('contact_info', toPhone).maybeSingle();
+      const { data: customer } = await supabaseAdmin.from('customers').select('id').eq('business_id', business_id).eq('phone', toPhone).maybeSingle();
+      if (lead || customer) {
+        isAllowedDestination = true;
+      }
+    }
+
+    if (!isAllowedDestination) {
+      return res.status(403).json({ error: 'Destination not allowed. Only German numbers (+49) or existing leads/customers are permitted.' });
+    }
+
     if (!twilioClient) {
       return res.status(500).json({ error: 'Twilio Client not initialized. Check .env.local' });
     }
@@ -1377,6 +1449,17 @@ app.post('/api/twilio/call', async (req, res) => {
       from: twilioPhone
     });
     metrics.record('twilio', performance.now() - t0);
+    
+    // Audit log
+    try {
+      await supabaseAdmin.from('call_logs').insert({
+        business_id,
+        to_phone: toPhone,
+        status: 'initiated'
+      });
+    } catch (e) {
+      console.error('Failed to write call audit log:', e);
+    }
 
     res.json({ success: true, callSid: call.sid });
   } catch (error: any) {

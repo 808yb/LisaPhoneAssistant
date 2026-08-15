@@ -3,6 +3,7 @@ import { saveLeadFunctionDeclaration, updateLeadFunctionDeclaration, checkAvaila
 import { PromptBuilder } from "./PromptBuilder";
 import { createClient } from "@supabase/supabase-js";
 import { metrics } from "../metrics";
+import { fetchSecure } from "../utils/fetchSecure";
 
 export const scriptedResponses: Record<string, string> = {
   '[SCRIPT_GREETING]': 'Autohaus Kaiserslautern, Guten Tag. Hier ist Lisa, Ihre KI-Assistentin. Dieses Gespräch wird nicht aufgezeichnet. Wie kann ich Ihnen helfen?',
@@ -147,13 +148,13 @@ export class GeminiService {
             savedLeadData.id = insertedLead.id; // Get the real UUID back
             
             // Fire Webhook if configured
-            const webhookUrl = businessFacts?.metadata?.webhookUrl;
+            const webhookUrl = businessFacts?.webhookUrl;
             if (webhookUrl) {
               const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-              const secret = businessFacts?.metadata?.webhookSecret;
+              const secret = businessFacts?.webhookSecret;
               if (secret) headers['Authorization'] = `Bearer ${secret}`;
               
-              fetch(webhookUrl, {
+              fetchSecure(webhookUrl, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({ event: 'lead_created', data: savedLeadData })
@@ -326,14 +327,6 @@ export class GeminiService {
           const args = call.args as any;
           let toolSuccess = true;
           let toolError = '';
-
-          // Check for duplicates to prevent Lisa from double-booking
-          const { data: existingAppts } = await this.supabase
-            .from('appointments')
-            .select('id')
-            .eq('business_id', business_id)
-            .eq('start_time', args.startTime);
-
           let customerId = matchedCustomer ? matchedCustomer.id : null;
 
           // Auto-create customer if it's a new caller
@@ -354,28 +347,27 @@ export class GeminiService {
             }
           }
 
-          if (!existingAppts || existingAppts.length === 0) {
-            const { data: insertedAppt, error: insertApptErr } = await this.supabase.from('appointments').insert({
-              business_id,
-              customer_id: customerId,
-              title: args.title,
-              start_time: args.startTime,
-              end_time: args.endTime,
-              notes: args.notes || 'Gebucht durch KI Assistentin Lisa',
-              status: 'confirmed'
-            }).select().single();
+          // Ensure args are properly formatted
+          const parsedStartTime = new Date(args.startTime).toISOString();
+          const parsedEndTime = new Date(args.endTime).toISOString();
 
-            if (insertApptErr) {
-              console.error('Failed to insert appointment:', insertApptErr);
-              toolSuccess = false;
-              toolError = insertApptErr.message;
-            } else if (insertedAppt) {
-              if (args.resourceId) {
-                await this.supabase.from('resources')
-                  .update({ status: 'in_use' })
-                  .eq('id', args.resourceId)
-                  .eq('business_id', business_id);
-              }
+          // Call the atomic RPC to book the appointment
+          const { data: rpcData, error: rpcError } = await this.supabase.rpc('book_appointment_atomic', {
+            p_business_id: business_id,
+            p_customer_id: customerId,
+            p_title: args.title,
+            p_start_time: parsedStartTime,
+            p_end_time: parsedEndTime,
+            p_notes: args.notes || 'Gebucht durch KI Assistentin Lisa',
+            p_resource_id: args.resourceId || null
+          });
+
+          if (rpcError || !rpcData || !rpcData.success) {
+            console.error('Failed to insert appointment atomically:', rpcError || rpcData?.error);
+            toolSuccess = false;
+            toolError = rpcData?.error || 'Termin konnte nicht gebucht werden (Race Condition oder DB Fehler).';
+          } else {
+            const insertedAppt = rpcData.appointment;
 
               // Also create a Lead so the call shows up in the Anrufhistorie
               savedLeadData = {
@@ -396,7 +388,6 @@ export class GeminiService {
               } catch (e) {
                 console.error("Failed to insert lead for appointment:", e);
               }
-            }
 
             // Fire Webhook if configured
             const webhookUrl = businessFacts?.webhookUrl;
@@ -405,15 +396,12 @@ export class GeminiService {
               const secret = businessFacts?.webhookSecret;
               if (secret) headers['Authorization'] = `Bearer ${secret}`;
               
-              fetch(webhookUrl, {
+              fetchSecure(webhookUrl, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({ event: 'appointment_booked', data: insertedAppt })
               }).catch(err => console.error('Webhook failed for appointment_booked', err));
             }
-          } else {
-             toolSuccess = false;
-             toolError = 'Termin existiert bereits zur gleichen Zeit.';
           }
 
           try {
@@ -435,13 +423,31 @@ export class GeminiService {
         } else if (call.name === 'check_available_resources') {
           toolCalled = true;
           const args = call.args as any;
+          // Filter resources that are globally available (not in maintenance, etc.)
           let query = this.supabase.from('resources').select('*').eq('business_id', business_id).eq('status', 'available');
           if (args.type) query = query.eq('type', args.type);
-          const { data: resources } = await query;
           
-          let responseText = "Es wurden keine freien Ressourcen gefunden.";
-          if (resources && resources.length > 0) {
-            responseText = "Freie Ressourcen:\n" + resources.map((r: any) => `- ID: ${r.id} | Name: ${r.name} (Details: ${JSON.stringify(r.metadata)})`).join('\n');
+          let { data: allResources } = await query;
+          allResources = allResources || [];
+
+          // If a specific time is given, filter out resources that are currently booked
+          if (args.startTime && args.endTime && allResources.length > 0) {
+            const { data: conflictingAppts } = await this.supabase
+              .from('appointments')
+              .select('resource_id')
+              .eq('business_id', business_id)
+              .not('resource_id', 'is', null)
+              .lt('start_time', args.endTime)
+              .gt('end_time', args.startTime);
+            
+            const bookedResourceIds = (conflictingAppts || []).map(a => a.resource_id);
+            allResources = allResources.filter(r => !bookedResourceIds.includes(r.id));
+          }
+
+          const responseData = allResources.length > 0 ? allResources : { message: 'Keine passenden und freien Ressourcen gefunden.' };
+          let responseText = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
+          if (Array.isArray(responseData)) {
+            responseText = "Freie Ressourcen:\n" + responseData.map((r: any) => `- ID: ${r.id} | Name: ${r.name} (Details: ${JSON.stringify(r.metadata)})`).join('\n');
           }
 
           try {
@@ -476,7 +482,7 @@ export class GeminiService {
               if (externalKey) {
                 headers['Authorization'] = `Bearer ${externalKey}`;
               }
-              const fetchRes = await fetch(externalUrl, {
+              const fetchRes = await fetchSecure(externalUrl, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({ action: 'check_availability', date: args.date, type: args.resourceType })
