@@ -13,6 +13,8 @@ import twilio from "twilio";
 import { metrics } from "./server/metrics";
 import * as cheerio from "cheerio";
 import { GoogleGenAI } from "@google/genai";
+import crypto from "crypto";
+import { LRUCache } from "lru-cache";
 
 // Polyfill WebSocket for Supabase in Node < 22
 globalThis.WebSocket = ws as any;
@@ -50,10 +52,10 @@ export const supabaseAdmin = createClient(supabaseUrl || '', supabaseServiceKey 
 // Auth & Context Middleware
 app.use(async (req, res, next) => {
   // 1. Check if it's a Twilio request (webhook)
-  const isTwilioRoute = req.path.startsWith('/api/twilio/') || req.path.startsWith('/api/voice/');
+  const isTwilioWebhook = req.path === '/api/twilio/incoming' || req.path === '/api/twilio/respond';
   const twilioNumber = req.body?.To || req.query?.To;
 
-  if (isTwilioRoute && twilioNumber) {
+  if (isTwilioWebhook && twilioNumber) {
     const { data: business } = await supabaseAdmin
       .from('businesses')
       .select('id')
@@ -109,7 +111,6 @@ app.use(async (req, res, next) => {
     '/api/twilio/respond',
     '/api/twilio/audio',
     '/api/voice/interact',
-    '/api/voice/tts',
     '/api/voice/voices'
   ];
 
@@ -843,7 +844,7 @@ try {
   console.warn("Google TTS Client could not be initialized:", e);
 }
 
-const ttsCache = new Map<string, Buffer>();
+const ttsCache = new LRUCache<string, Buffer>({ max: 5000 });
 
 // scriptedResponses are now imported from server/ai/Gemini.ts
 
@@ -891,7 +892,8 @@ async function pregenerateCustomScriptAudio(scriptObj: any, voiceId: string) {
     const cacheKey = `${text}-${voiceId}`;
     if (!ttsCache.has(cacheKey)) {
       const safeTag = item.tag.replace(/[^a-zA-Z0-9_]/g, '');
-      const filePath = path.join(AUDIO_CACHE_DIR, `dyn_${safeTag}_${voiceId}.mp3`);
+      const textHash = crypto.createHash('md5').update(text).digest('hex').substring(0, 8);
+      const filePath = path.join(AUDIO_CACHE_DIR, `dyn_${safeTag}_${textHash}_${voiceId}.mp3`);
 
       if (fs.existsSync(filePath)) {
         const audioBuffer = fs.readFileSync(filePath);
@@ -928,7 +930,8 @@ async function pregenerateScriptAudio(voiceId: string) {
     const cacheKey = `${text}-${voiceId}`;
     if (!ttsCache.has(cacheKey)) {
       const safeTag = tag.replace(/[^a-zA-Z0-9_]/g, '');
-      const filePath = path.join(AUDIO_CACHE_DIR, `${safeTag}_${voiceId}.mp3`);
+      const textHash = crypto.createHash('md5').update(text).digest('hex').substring(0, 8);
+      const filePath = path.join(AUDIO_CACHE_DIR, `${safeTag}_${textHash}_${voiceId}.mp3`);
 
       if (fs.existsSync(filePath)) {
         console.log(`Loading ${tag} from disk cache.`);
@@ -1010,45 +1013,49 @@ app.get('/api/voice/voices', async (req, res) => {
   }
 });
 
-app.post('/api/voice/tts', async (req, res) => {
-  const { text, voiceId } = req.body;
-  if (!text) return res.status(400).json({ error: 'Text is required' });
-
+export async function generateTTSCore(text: string, voiceId?: string): Promise<Buffer> {
   const targetVoiceId = voiceId || DEFAULT_VOICE_ID;
-
   const cacheKey = `${text}-${targetVoiceId}`;
+
   if (ttsCache.has(cacheKey)) {
-    res.set({ 'Content-Type': 'audio/mp3' });
-    return res.send(ttsCache.get(cacheKey));
+    return ttsCache.get(cacheKey) as Buffer;
   }
 
+  if (!ttsClient) throw new Error("Google TTS Client not initialized.");
+
+  const request = {
+    input: { text: text },
+    voice: { languageCode: 'de-DE', name: targetVoiceId },
+    audioConfig: {
+      audioEncoding: 'MP3' as const,
+      ...(targetVoiceId.includes('Journey') ? {} : { speakingRate: 1.10 })
+    },
+  };
+
+  const t0 = performance.now();
+  const [response] = await ttsClient.synthesizeSpeech(request);
+  metrics.record('tts', performance.now() - t0);
+
+  if (response.audioContent) {
+    const audioBuffer = Buffer.from(response.audioContent as Uint8Array);
+    ttsCache.set(cacheKey, audioBuffer);
+    return audioBuffer;
+  } else {
+    throw new Error("No audio content returned");
+  }
+}
+
+app.post('/api/voice/tts', async (req, res) => {
   try {
-    if (!ttsClient) throw new Error("Google TTS Client not initialized.");
+    const { text, voiceId } = req.body;
+    if (!text) return res.status(400).json({ error: 'Text is required' });
 
-    const request = {
-      input: { text: text },
-      voice: { languageCode: 'de-DE', name: targetVoiceId },
-      audioConfig: {
-        audioEncoding: 'MP3' as const,
-        ...(targetVoiceId.includes('Journey') ? {} : { speakingRate: 1.10 }) // Speeds up the voice by 10%
-      },
-    };
+    const audioBuffer = await generateTTSCore(text, voiceId);
 
-    const t0 = performance.now();
-    const [response] = await ttsClient.synthesizeSpeech(request);
-    metrics.record('tts', performance.now() - t0);
-
-    if (response.audioContent) {
-      const audioBuffer = Buffer.from(response.audioContent as Uint8Array);
-      ttsCache.set(cacheKey, audioBuffer); // Cache for future use
-
-      res.set({
-        'Content-Type': 'audio/mp3'
-      });
-      res.send(audioBuffer);
-    } else {
-      res.status(500).json({ error: "No audio content returned" });
-    }
+    res.set({
+      'Content-Type': 'audio/mp3'
+    });
+    res.send(audioBuffer);
   } catch (error: any) {
     console.error('Google TTS error:', error);
     res.status(500).json({ error: error.message });
@@ -1199,97 +1206,129 @@ const getAiClient = () => {
   return new GeminiService(apiKey, supabaseAdmin);
 };
 
+export async function processVoiceInteractionCore(params: {
+  phoneNumber: string;
+  userMessage?: string;
+  history: any[];
+  isFirstGreeting?: boolean;
+  hasSavedLead?: boolean;
+  business_id?: string;
+}) {
+  const { phoneNumber, userMessage, history, isFirstGreeting, hasSavedLead, business_id } = params;
+
+  // 1. Fetch Business Facts
+  let businessFacts: any = { dealershipName: 'Autohaus Kaiserslautern' };
+  const t0 = performance.now();
+  const { data: bf } = await supabaseAdmin.from('business_facts').select('*').eq('business_id', business_id).single();
+  const { data: biz } = await supabaseAdmin.from('businesses').select('name').eq('id', business_id).single();
+
+  if (bf || biz) {
+    let actualGuardrails = bf?.metadata?.guardrailsPrompt || '';
+    let permissions = { mentionPrices: false, mentionEmployees: true, bookAppointments: true, technicalAdvice: false };
+
+    if (actualGuardrails.includes('|||PERMISSIONS|||')) {
+      const parts = actualGuardrails.split('|||PERMISSIONS|||');
+      actualGuardrails = parts[0];
+      try { permissions = JSON.parse(parts[1]); } catch (e) { }
+    }
+
+    businessFacts = {
+      businessName: bf?.metadata?.businessName || biz?.name,
+      address: bf?.metadata?.address,
+      phone: bf?.metadata?.phone,
+      openingHours: bf?.metadata?.openingHours,
+      secondaryHours: bf?.metadata?.secondaryHours,
+      pricing: bf?.metadata?.pricing,
+      emergencyNumber: bf?.metadata?.emergencyNumber,
+      specialOffers: bf?.metadata?.specialOffers,
+      products: bf?.metadata?.products,
+      services: bf?.metadata?.services,
+      teamMembers: bf?.metadata?.teamMembers,
+      appointmentRules: bf?.metadata?.appointmentRules,
+      knowledgeBase: bf?.metadata?.knowledgeBase,
+      guardrailsPrompt: actualGuardrails,
+      permissions,
+      externalApiUrl: bf?.metadata?.externalApiUrl,
+      externalApiKey: bf?.metadata?.externalApiKey,
+      webhookUrl: bf?.metadata?.webhookUrl,
+      webhookSecret: bf?.metadata?.webhookSecret
+    };
+
+    let customScripts = { custom_nodes: [] };
+    try {
+      if (bf?.ai_prompt_instructions) {
+        customScripts = JSON.parse(bf.ai_prompt_instructions);
+      }
+    } catch (e) { }
+
+    let globalScripts: any = {};
+    try {
+      const p = path.join(process.cwd(), 'global_scripts.json');
+      if (fs.existsSync(p)) {
+        globalScripts = JSON.parse(fs.readFileSync(p, 'utf8'));
+      }
+    } catch (e) { }
+
+    // Resolve {business_name} placeholders in global scripts
+    const name = biz?.name || 'unserem Unternehmen';
+    businessFacts.scriptObj = {
+      core_greeting: (globalScripts.core_greeting || []).map((t: string) => t.replace(/{business_name}/g, name)),
+      core_ai_disclosure: (globalScripts.core_ai_disclosure || []).map((t: string) => t.replace(/{business_name}/g, name)),
+      core_farewell: (globalScripts.core_farewell || []).map((t: string) => t.replace(/{business_name}/g, name)),
+      fillers: globalScripts.fillers || [],
+      custom_nodes: customScripts.custom_nodes || []
+    };
+  } else {
+    businessFacts.guardrailsPrompt = "Sei stets freundlich, professionell und hilfsbereit.";
+    businessFacts.openingHours = { weekdays: '08:00 - 18:00', saturday: '09:00 - 14:00', sunday: 'Geschlossen' };
+    businessFacts.scriptObj = { core_greeting: [], core_ai_disclosure: [], core_farewell: [], custom_nodes: [] };
+  }
+
+  // 2. Lookup Customer
+  const cleanPhone = normalizePhone(phoneNumber || '');
+  const { data: allCusts } = await supabaseAdmin.from('customers').select('*').eq('business_id', business_id);
+  metrics.record('db', performance.now() - t0);
+  const matchedCustomer = allCusts?.find(c => normalizePhone(c.phone) === cleanPhone);
+
+  const aiService = getAiClient();
+  const result = await aiService.processInteraction(
+    phoneNumber,
+    userMessage,
+    history,
+    isFirstGreeting,
+    hasSavedLead,
+    businessFacts,
+    matchedCustomer,
+    business_id
+  );
+
+  return result;
+}
+
 app.post('/api/voice/interact', async (req, res) => {
   try {
     const { phoneNumber, userMessage, history, isFirstGreeting, hasSavedLead, business_id: bodyBusinessId } = req.body;
 
-    // Use body business_id if provided (e.g. from Twilio webhook), otherwise use auth token business_id
-    const business_id = bodyBusinessId || (req as any).business_id;
-    // 1. Fetch Business Facts
-    let businessFacts: any = { dealershipName: 'Autohaus Kaiserslautern' };
-    const t0 = performance.now();
-    const { data: bf } = await supabaseAdmin.from('business_facts').select('*').eq('business_id', business_id).single();
-    const { data: biz } = await supabaseAdmin.from('businesses').select('name').eq('id', business_id).single();
+    const authBusinessId = (req as any).business_id;
+    const isPublic = !req.headers.authorization;
 
-    if (bf || biz) {
-      let actualGuardrails = bf?.metadata?.guardrailsPrompt || '';
-      let permissions = { mentionPrices: false, mentionEmployees: true, bookAppointments: true, technicalAdvice: false };
-
-      if (actualGuardrails.includes('|||PERMISSIONS|||')) {
-        const parts = actualGuardrails.split('|||PERMISSIONS|||');
-        actualGuardrails = parts[0];
-        try { permissions = JSON.parse(parts[1]); } catch (e) { }
-      }
-
-      businessFacts = {
-        businessName: bf?.metadata?.businessName || biz?.name,
-        address: bf?.metadata?.address,
-        phone: bf?.metadata?.phone,
-        openingHours: bf?.metadata?.openingHours,
-        secondaryHours: bf?.metadata?.secondaryHours,
-        pricing: bf?.metadata?.pricing,
-        emergencyNumber: bf?.metadata?.emergencyNumber,
-        specialOffers: bf?.metadata?.specialOffers,
-        products: bf?.metadata?.products,
-        services: bf?.metadata?.services,
-        teamMembers: bf?.metadata?.teamMembers,
-        appointmentRules: bf?.metadata?.appointmentRules,
-        knowledgeBase: bf?.metadata?.knowledgeBase,
-        guardrailsPrompt: actualGuardrails,
-        permissions,
-        externalApiUrl: bf?.metadata?.externalApiUrl,
-        externalApiKey: bf?.metadata?.externalApiKey,
-        webhookUrl: bf?.metadata?.webhookUrl,
-        webhookSecret: bf?.metadata?.webhookSecret
-      };
-
-      let customScripts = { custom_nodes: [] };
-      try {
-        if (bf?.ai_prompt_instructions) {
-          customScripts = JSON.parse(bf.ai_prompt_instructions);
-        }
-      } catch (e) { }
-
-      let globalScripts: any = {};
-      try {
-        const p = path.join(process.cwd(), 'global_scripts.json');
-        if (fs.existsSync(p)) {
-          globalScripts = JSON.parse(fs.readFileSync(p, 'utf8'));
-        }
-      } catch (e) { }
-
-      // Resolve {business_name} placeholders in global scripts
-      const name = biz?.name || 'unserem Unternehmen';
-      businessFacts.scriptObj = {
-        core_greeting: (globalScripts.core_greeting || []).map((t: string) => t.replace(/{business_name}/g, name)),
-        core_ai_disclosure: (globalScripts.core_ai_disclosure || []).map((t: string) => t.replace(/{business_name}/g, name)),
-        core_farewell: (globalScripts.core_farewell || []).map((t: string) => t.replace(/{business_name}/g, name)),
-        fillers: globalScripts.fillers || [],
-        custom_nodes: customScripts.custom_nodes || []
-      };
-    } else {
-      businessFacts.guardrailsPrompt = "Sei stets freundlich, professionell und hilfsbereit.";
-      businessFacts.openingHours = { weekdays: '08:00 - 18:00', saturday: '09:00 - 14:00', sunday: 'Geschlossen' };
-      businessFacts.scriptObj = { core_greeting: [], core_ai_disclosure: [], core_farewell: [], custom_nodes: [] };
+    // Security check: Block explicit business_id from public requests to prevent tenant hijacking
+    if (isPublic && bodyBusinessId) {
+      return res.status(403).json({ error: 'Unauthorized tenant access.' });
     }
 
-    // 2. Lookup Customer
-    const cleanPhone = normalizePhone(phoneNumber || '');
-    const { data: allCusts } = await supabaseAdmin.from('customers').select('*').eq('business_id', business_id);
-    metrics.record('db', performance.now() - t0);
-    const matchedCustomer = allCusts?.find(c => normalizePhone(c.phone) === cleanPhone);
+    // Only use auth-provided business_id.
+    // For demo purposes (public without body business_id), this falls back to undefined.
+    const business_id = authBusinessId;
 
-    const aiService = getAiClient();
-    const result = await aiService.processInteraction(
+    const result = await processVoiceInteractionCore({
       phoneNumber,
       userMessage,
       history,
       isFirstGreeting,
       hasSavedLead,
-      businessFacts,
-      matchedCustomer,
       business_id
-    );
+    });
 
     res.json(result);
   } catch (error: any) {
@@ -1303,10 +1342,10 @@ app.post('/api/voice/interact', async (req, res) => {
 // ==========================================
 
 // In-memory stores
-const twilioCallSessions = new Map<string, any[]>();
-const twilioCallStates = new Map<string, { hasSavedLead: boolean }>();
-const twilioCallFillers = new Map<string, any[]>();
-const twilioAudioCache = new Map<string, Buffer>();
+const twilioCallSessions = new LRUCache<string, any[]>({ max: 500, ttl: 1000 * 60 * 60 * 2 }); // 2 hours TTL
+const twilioCallStates = new LRUCache<string, { hasSavedLead: boolean }>({ max: 500, ttl: 1000 * 60 * 60 * 2 });
+const twilioCallFillers = new LRUCache<string, any[]>({ max: 500, ttl: 1000 * 60 * 60 * 2 });
+const twilioAudioCache = new LRUCache<string, Buffer>({ max: 1000, ttl: 1000 * 60 * 30 }); // 30 mins TTL
 
 // Initialize Twilio Client for Outbound calls
 let twilioClient: twilio.Twilio | null = null;
@@ -1394,28 +1433,17 @@ app.post('/api/twilio/incoming', validateTwilioRequest, async (req, res) => {
     }
 
     // Fetch initial greeting using the existing logic
-    const interactRes = await fetch(`http://localhost:${PORT}/api/voice/interact`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        phoneNumber: fromPhone,
-        isFirstGreeting: true,
-        history: [],
-        business_id
-      })
+    const interactData = await processVoiceInteractionCore({
+      phoneNumber: fromPhone,
+      history: [],
+      isFirstGreeting: true,
+      business_id
     });
 
-    const interactData = await interactRes.json();
     const greetingText = interactData.text || "Guten Tag. Wie kann ich Ihnen helfen?";
 
     // Generate Audio
-    const ttsRes = await fetch(`http://localhost:${PORT}/api/voice/tts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: greetingText })
-    });
-
-    const audioBuffer = Buffer.from(await ttsRes.arrayBuffer());
+    const audioBuffer = await generateTTSCore(greetingText);
     const audioId = Date.now().toString();
     twilioAudioCache.set(audioId, audioBuffer);
 
@@ -1546,19 +1574,13 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
         }
 
         // Send to Gemini
-        const interactRes = await fetch(`http://localhost:${PORT}/api/voice/interact`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            phoneNumber: fromPhone,
-            userMessage: userSpeech,
-            history: history,
-            hasSavedLead: callState.hasSavedLead,
-            business_id
-          })
+        const interactData = await processVoiceInteractionCore({
+          phoneNumber: fromPhone,
+          userMessage: userSpeech,
+          history: history,
+          hasSavedLead: callState.hasSavedLead,
+          business_id
         });
-
-        const interactData = await interactRes.json();
         const assistantText = interactData.text || "Ich habe Sie leider nicht verstanden.";
 
         if (interactData.savedLeadData) {
@@ -1570,13 +1592,7 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
         twilioCallSessions.set(callSid, history);
 
         // Generate Audio for the final response
-        const ttsRes = await fetch(`http://localhost:${PORT}/api/voice/tts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: assistantText })
-        });
-
-        const audioBuffer = Buffer.from(await ttsRes.arrayBuffer());
+        const audioBuffer = await generateTTSCore(assistantText);
         const audioId = Date.now().toString();
         twilioAudioCache.set(audioId, audioBuffer);
 

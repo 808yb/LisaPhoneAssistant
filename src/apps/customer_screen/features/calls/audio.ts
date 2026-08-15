@@ -1,4 +1,5 @@
 // Audio synthesis helper for German Voice Receptionist using ElevenLabs
+import { supabase } from '../../../../core/supabaseClient';
 
 let currentAudio: HTMLAudioElement | null = null;
 if (typeof window !== 'undefined') {
@@ -50,15 +51,21 @@ export function speakText(text: string, voiceId: string | null, onEnd?: () => vo
     voiceId: voiceId || undefined
   };
 
-  fetch('/api/voice/tts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  })
-    .then(res => {
-      if (!res.ok) throw new Error("TTS failed");
-      return res.blob();
+  supabase.auth.getSession().then(({ data: { session } }) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (session) {
+      headers['Authorization'] = `Bearer ${session.access_token}`;
+    }
+
+    fetch('/api/voice/tts', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload)
     })
+      .then(res => {
+        if (!res.ok) throw new Error("TTS failed");
+        return res.blob();
+      })
     .then(blob => {
       const url = URL.createObjectURL(blob);
       if (!currentAudio) currentAudio = new Audio();
@@ -84,6 +91,7 @@ export function speakText(text: string, voiceId: string | null, onEnd?: () => vo
       console.error(err);
       if (onEnd) onEnd();
     });
+  });
 
   return () => {
     stopSpeaking();

@@ -11,6 +11,10 @@ export interface Appointment {
   status: string;
   notes?: string;
   created_at: string;
+  customer?: {
+    name?: string;
+    phone?: string;
+  };
 }
 
 export function useAppointments() {
