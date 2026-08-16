@@ -61,7 +61,12 @@ export const useCallSession = (selectedCustomer: Customer | null, customPhone: s
         const res = await fetch('/api/voice/interact', {
           method: 'POST',
           headers,
-          body: JSON.stringify({ phoneNumber: currentPhone, isFirstGreeting: true, history: [] })
+          body: JSON.stringify({ 
+            phoneNumber: currentPhone, 
+            isFirstGreeting: true, 
+            history: [],
+            callId: String(currentCallId)
+          })
         });
 
         const data = await res.json();
@@ -174,7 +179,8 @@ export const useCallSession = (selectedCustomer: Customer | null, customPhone: s
           phoneNumber: currentPhone,
           userMessage: messageText,
           history: newHistory,
-          hasSavedLead
+          hasSavedLead,
+          callId: String(callIdRef.current)
         })
       });
 

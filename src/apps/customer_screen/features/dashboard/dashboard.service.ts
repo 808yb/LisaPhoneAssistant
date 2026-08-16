@@ -10,7 +10,10 @@ const getHeaders = async () => {
 };
 
 export const fetchLeads = async (): Promise<Lead[]> => {
-  const res = await fetch('/api/leads', { headers: await getHeaders() });
+  const res = await fetch('/api/leads', { 
+    headers: await getHeaders(),
+    cache: 'no-store'
+  });
   if (!res.ok) throw new Error('Failed to fetch leads');
   return res.json();
 };

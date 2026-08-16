@@ -15,6 +15,7 @@ import * as cheerio from "cheerio";
 import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
 import { LRUCache } from "lru-cache";
+import { fetchSecure } from "./server/utils/fetchSecure";
 
 // Polyfill WebSocket for Supabase in Node < 22
 globalThis.WebSocket = ws as any;
@@ -484,11 +485,14 @@ app.get('/api/leads', async (req, res) => {
     phoneNumber: d.contact_info, // db uses "contact_info"
     createdAt: d.created_at,
     updatedAt: d.updated_at,
+    category: d.metadata?.category || 'general',
+    urgency: d.metadata?.urgency || 'normal',
+    status: d.status || 'new',
     additionalInfo: d.metadata?.vehicleInfo || d.metadata?.additionalInfo,
     preferredCallbackTime: d.metadata?.preferredCallbackTime,
     assignedStaff: d.metadata?.assignedStaff
   }));
-
+  
   res.json(mappedData);
 });
 
@@ -623,63 +627,77 @@ app.get('/api/business-facts', async (req, res) => {
 });
 
 app.post('/api/business-facts', async (req, res) => {
-  const business_id = (req as any).business_id;
+  try {
+    const business_id = (req as any).business_id;
 
-  // Fetch existing to preserve secrets if they weren't changed
-  const { data: existingData } = await supabaseAdmin.from('business_facts').select('metadata').eq('business_id', business_id).single();
-  const existingMetadata = existingData?.metadata || {};
-  
-  const { data: existingSecrets } = await supabaseAdmin.from('business_secrets').select('*').eq('business_id', business_id).single();
+    // Fetch existing to preserve secrets if they weren't changed
+    const { data: existingData } = await supabaseAdmin.from('business_facts').select('metadata').eq('business_id', business_id).maybeSingle();
+    const existingMetadata = existingData?.metadata || {};
+    
+    const { data: existingSecrets } = await supabaseAdmin.from('business_secrets').select('*').eq('business_id', business_id).maybeSingle();
 
-  let apiKeyToSave = req.body.externalApiKey;
-  if (apiKeyToSave === '********') {
-    apiKeyToSave = existingSecrets?.external_api_key || existingMetadata.externalApiKey;
+    let apiKeyToSave = req.body.externalApiKey;
+    if (apiKeyToSave === '********') {
+      apiKeyToSave = existingSecrets?.external_api_key;
+    }
+    
+    let webhookSecretToSave = req.body.webhookSecret;
+    if (webhookSecretToSave === '********') {
+      webhookSecretToSave = existingSecrets?.webhook_secret;
+    }
+
+    // Upsert the secrets into the new secure table
+    if (apiKeyToSave !== undefined || webhookSecretToSave !== undefined) {
+      const { error: secretsError } = await supabaseAdmin.from('business_secrets').upsert({
+        business_id,
+        external_api_key: apiKeyToSave || null,
+        webhook_secret: webhookSecretToSave || null,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'business_id' });
+      
+      if (secretsError) {
+        console.error('Error upserting business_secrets:', secretsError);
+        return res.status(500).json({ error: 'Failed to save secrets: ' + secretsError.message });
+      }
+    }
+
+    // Package everything into the metadata object (EXCLUDING secrets!)
+    const metadata = {
+      businessName: req.body.businessName ?? existingMetadata.businessName,
+      address: req.body.address ?? existingMetadata.address,
+      phone: req.body.phone ?? existingMetadata.phone,
+      email: req.body.email ?? existingMetadata.email,
+      openingHours: req.body.openingHours ?? existingMetadata.openingHours,
+      secondaryHours: req.body.secondaryHours ?? existingMetadata.secondaryHours,
+      pricing: req.body.pricing ?? existingMetadata.pricing,
+      emergencyNumber: req.body.emergencyNumber ?? existingMetadata.emergencyNumber,
+      specialOffers: req.body.specialOffers ?? existingMetadata.specialOffers,
+      guardrailsPrompt: (req.body.guardrailsPrompt ?? '') + '|||PERMISSIONS|||' + JSON.stringify(req.body.permissions || {}),
+      products: req.body.products ?? existingMetadata.products,
+      services: req.body.services ?? existingMetadata.services,
+      teamMembers: req.body.teamMembers ?? existingMetadata.teamMembers,
+      appointmentRules: req.body.appointmentRules ?? existingMetadata.appointmentRules,
+      knowledgeBase: req.body.knowledgeBase ?? existingMetadata.knowledgeBase,
+      externalApiUrl: req.body.externalApiUrl ?? existingMetadata.externalApiUrl,
+      webhookUrl: req.body.webhookUrl ?? existingMetadata.webhookUrl
+    };
+
+    const payload = {
+      business_id: business_id,
+      metadata: metadata
+    };
+
+    const { data, error } = await supabaseAdmin.from('business_facts').upsert(payload, { onConflict: 'business_id' }).select().single();
+    if (error) {
+      console.error('Error upserting business_facts:', error);
+      return res.status(500).json({ error: error.message });
+    }
+    
+    res.json(req.body);
+  } catch (err: any) {
+    console.error('Unhandled error in POST /api/business-facts:', err);
+    res.status(500).json({ error: err.message });
   }
-  
-  let webhookSecretToSave = req.body.webhookSecret;
-  if (webhookSecretToSave === '********') {
-    webhookSecretToSave = existingSecrets?.webhook_secret || existingMetadata.webhookSecret;
-  }
-
-  // Upsert the secrets into the new secure table
-  if (apiKeyToSave !== undefined || webhookSecretToSave !== undefined) {
-    await supabaseAdmin.from('business_secrets').upsert({
-      business_id,
-      external_api_key: apiKeyToSave || null,
-      webhook_secret: webhookSecretToSave || null,
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'business_id' });
-  }
-
-  // Package everything into the metadata object (EXCLUDING secrets!)
-  const metadata = {
-    businessName: req.body.businessName,
-    address: req.body.address,
-    phone: req.body.phone,
-    email: req.body.email,
-    openingHours: req.body.openingHours,
-    secondaryHours: req.body.secondaryHours,
-    pricing: req.body.pricing,
-    emergencyNumber: req.body.emergencyNumber,
-    specialOffers: req.body.specialOffers,
-    guardrailsPrompt: req.body.guardrailsPrompt + '|||PERMISSIONS|||' + JSON.stringify(req.body.permissions || {}),
-    products: req.body.products,
-    services: req.body.services,
-    teamMembers: req.body.teamMembers,
-    appointmentRules: req.body.appointmentRules,
-    knowledgeBase: req.body.knowledgeBase,
-    externalApiUrl: req.body.externalApiUrl,
-    webhookUrl: req.body.webhookUrl
-  };
-
-  const payload = {
-    business_id: business_id,
-    metadata: metadata
-  };
-
-  const { data, error } = await supabaseAdmin.from('business_facts').upsert(payload, { onConflict: 'business_id' }).select().single();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(req.body);
 });
 
 // --- RESOURCES ---
@@ -700,16 +718,22 @@ app.get('/api/external-resources', async (req, res) => {
     .eq('business_id', business_id)
     .single();
 
+  const { data: secrets } = await supabaseAdmin
+    .from('business_secrets')
+    .select('external_api_key')
+    .eq('business_id', business_id)
+    .single();
+
   if (error || !bf || !bf.metadata?.externalApiUrl) {
     return res.status(400).json({ error: "Keine externe API konfiguriert." });
   }
 
   const url = bf.metadata.externalApiUrl;
-  const token = bf.metadata.externalApiKey;
+  const token = secrets?.external_api_key;
 
   // 2. Fetch from the external API
   try {
-    const fetchRes = await fetch(url, {
+    const fetchRes = await fetchSecure(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -739,15 +763,21 @@ app.post('/api/external-resources/update', async (req, res) => {
     .eq('business_id', business_id)
     .single();
 
+  const { data: secrets } = await supabaseAdmin
+    .from('business_secrets')
+    .select('external_api_key')
+    .eq('business_id', business_id)
+    .single();
+
   if (error || !bf || !bf.metadata?.externalApiUrl) {
     return res.status(400).json({ error: "Keine externe API konfiguriert." });
   }
 
   const url = bf.metadata.externalApiUrl;
-  const token = bf.metadata.externalApiKey;
+  const token = secrets?.external_api_key;
 
   try {
-    const fetchRes = await fetch(url, {
+    const fetchRes = await fetchSecure(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -935,7 +965,7 @@ async function pregenerateCustomScriptAudio(scriptObj: any, voiceId: string) {
         try {
           console.log(`Generating TTS for dynamic text: "${text.substring(0, 20)}..."`);
           const request = {
-            input: { text: text + ' ...' },
+            input: { text: text },
             voice: { languageCode: 'de-DE', name: voiceId },
             audioConfig: {
               audioEncoding: 'MP3' as const,
@@ -1161,7 +1191,7 @@ app.post('/api/scrape-business', async (req, res) => {
     if (!url) return res.status(400).json({ error: 'URL is required' });
 
     // 1. Fetch website HTML
-    const fetchRes = await fetch(url, {
+    const fetchRes = await fetchSecure(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8'
@@ -1245,8 +1275,9 @@ export async function processVoiceInteractionCore(params: {
   isFirstGreeting?: boolean;
   hasSavedLead?: boolean;
   business_id?: string;
+  callId?: string;
 }) {
-  const { phoneNumber, userMessage, history, isFirstGreeting, hasSavedLead, business_id } = params;
+  const { phoneNumber, userMessage, history, isFirstGreeting, hasSavedLead, business_id, callId } = params;
 
   // 1. Fetch Business Facts
   let businessFacts: any = { dealershipName: 'Autohaus Kaiserslautern' };
@@ -1265,9 +1296,9 @@ export async function processVoiceInteractionCore(params: {
       try { permissions = JSON.parse(parts[1]); } catch (e) { }
     }
 
-    // Auto-migration fallback for existing data
-    const externalApiKey = secrets?.external_api_key || bf?.metadata?.externalApiKey;
-    const webhookSecret = secrets?.webhook_secret || bf?.metadata?.webhookSecret;
+    // Auto-migration fallback for existing data is REMOVED (migration script run explicitly)
+    const externalApiKey = secrets?.external_api_key;
+    const webhookSecret = secrets?.webhook_secret;
 
     businessFacts = {
       businessName: bf?.metadata?.businessName || biz?.name,
@@ -1332,11 +1363,12 @@ export async function processVoiceInteractionCore(params: {
     phoneNumber,
     userMessage,
     history,
-    isFirstGreeting,
-    hasSavedLead,
+    isFirstGreeting || false,
+    hasSavedLead || false,
     businessFacts,
     matchedCustomer,
-    business_id
+    business_id || '',
+    callId || ''
   );
 
   return result;
@@ -1344,7 +1376,7 @@ export async function processVoiceInteractionCore(params: {
 
 app.post('/api/voice/interact', async (req, res) => {
   try {
-    const { phoneNumber, userMessage, history, isFirstGreeting, hasSavedLead, business_id: bodyBusinessId } = req.body;
+    const { phoneNumber, userMessage, history, isFirstGreeting, hasSavedLead, business_id: bodyBusinessId, callId } = req.body;
 
     const authBusinessId = (req as any).business_id;
     const isPublic = !req.headers.authorization;
@@ -1364,7 +1396,8 @@ app.post('/api/voice/interact', async (req, res) => {
       history,
       isFirstGreeting,
       hasSavedLead,
-      business_id
+      business_id,
+      callId
     });
 
     res.json(result);
@@ -1520,7 +1553,9 @@ app.post('/api/twilio/incoming', validateTwilioRequest, async (req, res) => {
       phoneNumber: fromPhone,
       history: [],
       isFirstGreeting: true,
-      business_id
+      hasSavedLead: false,
+      business_id,
+      callId: callSid
     });
 
     const greetingText = interactData.text || "Guten Tag. Wie kann ich Ihnen helfen?";
@@ -1661,8 +1696,10 @@ app.post('/api/twilio/respond', validateTwilioRequest, async (req, res) => {
           phoneNumber: fromPhone,
           userMessage: userSpeech,
           history: history,
+          isFirstGreeting: false,
           hasSavedLead: callState.hasSavedLead,
-          business_id
+          business_id,
+          callId: callSid
         });
         const assistantText = interactData.text || "Ich habe Sie leider nicht verstanden.";
 

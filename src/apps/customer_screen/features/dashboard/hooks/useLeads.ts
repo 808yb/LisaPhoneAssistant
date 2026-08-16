@@ -31,8 +31,20 @@ export const useLeads = () => {
       }
     });
 
+    const channel = supabase.channel('leads-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, (payload) => {
+        // Automatically refetch leads when a change happens in the database
+        fetchLeads(false);
+      })
+      .subscribe();
+
+    // Fallback: Poll every 3 seconds to guarantee UI updates even if Realtime is misconfigured
+    const interval = setInterval(() => fetchLeads(false), 3000);
+
     return () => {
       subscription.unsubscribe();
+      supabase.removeChannel(channel);
+      clearInterval(interval);
     };
   }, []);
 

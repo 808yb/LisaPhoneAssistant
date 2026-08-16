@@ -8,7 +8,7 @@ export const saveLeadFunctionDeclaration: FunctionDeclaration = {
     properties: {
       callerName: { type: Type.STRING, description: "Name des Anrufers" },
       phoneNumber: { type: Type.STRING, description: "Telefonnummer des Anrufers" },
-      category: { type: Type.STRING, description: "Kategorie des Anliegens: 'service', 'sales', 'support', 'booking', 'other'" },
+      category: { type: Type.STRING, description: "Kategorie des Anliegens: 'service' (Dienstleistung), 'sales' (Verkauf/Kauf), 'support' (Hilfe/Support), 'booking' (Termin/Buchung), oder 'general' (Sonstiges)" },
       concern: { type: Type.STRING, description: "Genaue Beschreibung des Kundenanliegens" },
       urgency: { type: Type.STRING, description: "Dringlichkeit: 'high' (wenn es dringend ist, 'schnell' gehen muss oder Notfall), 'normal' (Standard), 'low'" },
       additionalInfo: { type: Type.STRING, description: "Zusätzliche Infos oder Details zum Kunden/Anliegen" },

@@ -35,7 +35,8 @@ export class GeminiService {
     hasSavedLead: boolean,
     businessFacts: any,
     matchedCustomer: any,
-    business_id: string
+    business_id: string,
+    callId: string
   ) {
     const injectedContext = PromptBuilder.buildContext(matchedCustomer, phoneNumber, hasSavedLead);
 
@@ -131,6 +132,7 @@ export class GeminiService {
             concern: args.concern || 'Anfrage',
             status: 'new',
             metadata: {
+              call_id: callId,
               category: args.category || 'general',
               urgency: args.urgency || 'normal',
               vehicleInfo: args.vehicleInfo || (matchedCustomer?.metadata?.vehicle || ''),
@@ -169,8 +171,8 @@ export class GeminiService {
                 business_id: business_id,
                 name: args.callerName,
                 phone: phoneNumber,
-                notes: 'Automatisch durch Lisa nach dem ersten Anruf angelegt.',
                 metadata: {
+                  notes: 'Automatisch durch Lisa nach dem ersten Anruf angelegt.',
                   vehicle: args.vehicleInfo || null,
                   isKnownCustomer: false
                 }
@@ -214,9 +216,15 @@ export class GeminiService {
           const leadId = args.leadId;
           const additionalConcern = args.additionalConcern;
 
-          const { data: latestLeads } = await this.supabase.from('leads')
+          let query = this.supabase.from('leads')
             .select('*')
-            .eq('business_id', business_id)
+            .eq('business_id', business_id);
+            
+          if (callId) {
+            query = query.contains('metadata', { call_id: callId });
+          }
+          
+          const { data: latestLeads } = await query
             .order('created_at', { ascending: false })
             .limit(1);
 
@@ -327,10 +335,16 @@ export class GeminiService {
           const args = call.args as any;
           let toolSuccess = true;
           let toolError = '';
+          
+          if (businessFacts?.permissions && businessFacts.permissions.bookAppointments === false) {
+             toolSuccess = false;
+             toolError = "Fehler: Die Terminbuchung ist für dich als Assistent deaktiviert. Teile dem Kunden mit, dass er für Terminbuchungen bitte während der Geschäftszeiten anrufen oder eine E-Mail schreiben soll.";
+          }
+          
           let customerId = matchedCustomer ? matchedCustomer.id : null;
 
           // Auto-create customer if it's a new caller
-          if (!customerId && args.callerName) {
+          if (toolSuccess && !customerId && args.callerName) {
             try {
               const { data: newCust } = await this.supabase.from('customers').insert({
                 business_id: business_id,
@@ -352,15 +366,22 @@ export class GeminiService {
           const parsedEndTime = new Date(args.endTime).toISOString();
 
           // Call the atomic RPC to book the appointment
-          const { data: rpcData, error: rpcError } = await this.supabase.rpc('book_appointment_atomic', {
-            p_business_id: business_id,
-            p_customer_id: customerId,
-            p_title: args.title,
-            p_start_time: parsedStartTime,
-            p_end_time: parsedEndTime,
-            p_notes: args.notes || 'Gebucht durch KI Assistentin Lisa',
-            p_resource_id: args.resourceId || null
-          });
+          let rpcData: any = null;
+          let rpcError: any = null;
+          
+          if (toolSuccess) {
+            const result = await this.supabase.rpc('book_appointment_atomic', {
+              p_business_id: business_id,
+              p_customer_id: customerId,
+              p_title: args.title,
+              p_start_time: parsedStartTime,
+              p_end_time: parsedEndTime,
+              p_notes: args.notes || 'Gebucht durch KI Assistentin Lisa',
+              p_resource_id: args.resourceId || null
+            });
+            rpcData = result.data;
+            rpcError = result.error;
+          }
 
           if (rpcError || !rpcData || !rpcData.success) {
             console.error('Failed to insert appointment atomically:', rpcError || rpcData?.error);
@@ -377,6 +398,7 @@ export class GeminiService {
                 concern: 'Terminbuchung: ' + args.title,
                 status: 'closed', // Mark as closed since it's already a confirmed appointment
                 metadata: {
+                  call_id: callId,
                   category: 'booking',
                   urgency: 'normal',
                   notes: 'Termin wurde von Lisa gebucht: ' + (args.notes || ''),

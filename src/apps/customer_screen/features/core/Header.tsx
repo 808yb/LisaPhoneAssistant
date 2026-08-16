@@ -60,8 +60,8 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <Icon className={`w-3.5 h-3.5 ${isActive ? item.activeColor : item.color}`} />
                   <span>{item.label}</span>
-                  {('count' in item && item.count) ? (
-                    <span className="px-1.5 py-0.2 text-[10px] font-mono font-bold rounded bg-emerald-200 text-slate-900 border border-emerald-300 ml-1">
+                  {('count' in item && typeof item.count === 'number') ? (
+                    <span className="px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-emerald-200 text-slate-900 border border-emerald-300 ml-1">
                       {(item as any).count}
                     </span>
                   ) : null}

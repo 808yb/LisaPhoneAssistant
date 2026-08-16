@@ -3,16 +3,16 @@ import { LeadCategory, LeadUrgency, LeadStatus } from '../../../../core/types';
 
 export const getCategoryBadge = (category: LeadCategory) => {
   switch (category) {
-    case 'workshop':
-      return <span className="px-2.5 py-0.5 rounded-full bg-orange-500 text-white text-[10px] font-bold tracking-wide uppercase">Werkstatt</span>;
+    case 'service':
+      return <span className="px-2.5 py-0.5 rounded-full bg-orange-500 text-white text-[10px] font-bold tracking-wide uppercase">Service</span>;
     case 'sales':
-      return <span className="px-2.5 py-0.5 rounded-full bg-purple-500 text-white text-[10px] font-bold tracking-wide uppercase">Vertrieb</span>;
-    case 'test_drive':
-      return <span className="px-2.5 py-0.5 rounded-full bg-pink-500 text-white text-[10px] font-bold tracking-wide uppercase">Probefahrt</span>;
-    case 'spare_parts':
-      return <span className="px-2.5 py-0.5 rounded-full bg-teal-500 text-white text-[10px] font-bold tracking-wide uppercase">Teile</span>;
+      return <span className="px-2.5 py-0.5 rounded-full bg-purple-500 text-white text-[10px] font-bold tracking-wide uppercase">Verkauf</span>;
+    case 'booking':
+      return <span className="px-2.5 py-0.5 rounded-full bg-pink-500 text-white text-[10px] font-bold tracking-wide uppercase">Termin</span>;
+    case 'support':
+      return <span className="px-2.5 py-0.5 rounded-full bg-teal-500 text-white text-[10px] font-bold tracking-wide uppercase">Support</span>;
     case 'rental':
-      return <span className="px-2.5 py-0.5 rounded-full bg-sky-500 text-white text-[10px] font-bold tracking-wide uppercase">Mietwagen</span>;
+      return <span className="px-2.5 py-0.5 rounded-full bg-sky-500 text-white text-[10px] font-bold tracking-wide uppercase">Vermietung</span>;
     default:
       return <span className="px-2.5 py-0.5 rounded-full bg-slate-500 text-white text-[10px] font-bold tracking-wide uppercase">Sonstiges</span>;
   }

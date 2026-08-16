@@ -64,8 +64,7 @@ export const LeadList: React.FC<LeadListProps> = ({
             <div className="space-y-3 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 {getStatusBadge(lead.status)}
-                {getCategoryBadge(lead.category)}
-                {getUrgencyBadge(lead.urgency)}
+                {lead.urgency === 'high' && getUrgencyBadge(lead.urgency)}
                 <span className="text-[11px] text-slate-400 font-mono ml-1">
                   {new Date(lead.createdAt).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} Uhr
                 </span>
